@@ -1,0 +1,43 @@
+# Generic bank statement mapping profile (FR-4)
+# Maps common source column names -> canonical Event(TRANSACTION) fields (Doc 06 §5).
+# `aliases` let auto-detection match varied header spellings.
+profile:
+  id: bank_generic
+  source: BANK
+  event_type: TRANSACTION
+  match:
+    # Header keywords used by auto-detection to select this profile
+    required_any: ["narration", "description", "particulars"]
+    required_all: []
+field_map:
+  timestamp_start:
+    aliases: ["Transaction Date", "Txn Date", "Date", "Value Date", "Tran Date"]
+    type: datetime
+  attributes.narration:
+    aliases: ["Narration", "Description", "Particulars", "Remarks"]
+    type: string
+  debit:
+    aliases: ["Debit", "Withdrawal", "Withdrawal Amt", "Dr"]
+    type: decimal
+  credit:
+    aliases: ["Credit", "Deposit", "Deposit Amt", "Cr"]
+    type: decimal
+  attributes.balance:
+    aliases: ["Balance", "Closing Balance", "Running Balance"]
+    type: decimal
+  attributes.ref_no:
+    aliases: ["Ref No", "Reference", "Cheque No", "Transaction ID", "UTR", "RRN"]
+    type: string
+# Identity fields typically live in the statement header block, not per-row
+header_identity:
+  account_no:
+    aliases: ["Account Number", "A/C No", "Account No"]
+  account_holder:
+    aliases: ["Account Name", "Customer Name", "Name"]
+  registered_mobile:
+    aliases: ["Registered Mobile", "Customer Mobile", "Mobile", "Mobile Number", "Phone"]
+# Narration mining: extract embedded identifiers via regex (FR-10)
+narration_extract:
+  upi_id: '([a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,})'
+  utr: '\b(\d{12,22})\b'
+  mode: '\b(UPI|NEFT|IMPS|RTGS|ATM|POS|CASH)\b'

@@ -1,0 +1,61 @@
+# ERakshak — central runtime configuration (NFR-6: externalized tunables)
+# Every value here is intended to be overridable; no thresholds hard-coded in source.
+
+app:
+  name: ERakshak
+  timezone: "Asia/Kolkata"        # default TZ when source lacks one (Doc 06)
+  currency: "INR"
+
+ingestion:
+  # Confidence required for schema auto-detection before accepting a profile (Doc 04, DP-3)
+  auto_detect_confidence_threshold: 0.80
+  # If below threshold -> route to manual mapping instead of guessing
+  on_low_confidence: "manual_mapping"
+
+normalization:
+  phone_default_region: "IN"       # for E.164 normalization
+  phone_e164_prefix: "+91"
+
+correlation:
+  # Default temporal window for "call + IP + transfer" coincidence (Doc 04; Q4 = 10 min)
+  default_window_minutes: 10
+  # Additional preset windows exposed in the UI
+  window_presets_minutes: [1, 5, 10, 30, 60]
+
+entity_resolution:
+  # review fix C3: identifiers used to MERGE entities. Public IP is deliberately excluded
+  # (CGNAT means many subscribers share one IP -> merging on it collapses unrelated people).
+  merge_key_types: ["PHONE", "ACCOUNT_NO", "IMEI", "IMSI"]
+  # circuit breaker: refuse to merge into a component larger than this (likely a bad key)
+  max_component_size: 50
+
+graph:
+  backend: "networkx"              # options: networkx | neo4j (optional, scale-triggered)
+  # review fix C4: bound worst-case-exponential graph algorithms
+  max_cycles: 5000                 # stop cycle enumeration after this many
+  max_cycle_seconds: 5.0           # wall-clock cap for cycle enumeration
+  max_layering_paths: 20000        # stop layering DFS after this many paths explored
+
+search:
+  backend: "postgres"             # options: postgres | elasticsearch (optional)
+
+uploads:
+  # review fix H2
+  allowed_extensions: [".xlsx", ".xls", ".csv", ".txt", ".pdf"]
+  max_file_mb: 25
+  max_files: 50
+
+persistence:
+  # review fix C1. sqlite by default (local, durable); override with DATABASE_URL for Postgres.
+  enabled: true
+  database_url: "sqlite:///./data/erakshak.db"
+
+api:
+  version: "v1"                    # review fix M2 (versioned routes)
+
+# Target Indian telecom operators for CDR/IPDR profiles (Doc 01 assumption)
+operators:
+  - jio
+  - airtel
+  - vi
+  - bsnl

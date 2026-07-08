@@ -1,0 +1,62 @@
+# ERakshak — anomaly detection thresholds & risk weights (FR-11/12/13, NFR-3)
+# FATF-style configurable defaults (Q5 = ASSUMED). Tune with analyst feedback / real data.
+# Every rule is independently toggleable and weighted into the composite risk score.
+
+rules:
+  structuring:
+    enabled: true
+    # Transactions clustered just below a reporting threshold (smurfing)
+    reporting_threshold_inr: 1000000        # INR 10 lakh (illustrative; confirm Q5)
+    just_below_band_pct: 0.10               # within 10% below the threshold
+    min_occurrences: 3                      # >= 3 such txns in the window
+    window_hours: 24
+    weight: 0.20
+
+  rapid_in_out:
+    enabled: true
+    # Money credited then debited quickly (pass-through)
+    max_hold_minutes: 60
+    min_forwarded_pct: 0.80                 # >= 80% of credit forwarded
+    weight: 0.20
+
+  layering:
+    enabled: true
+    # Funds hop across >= N accounts within a short span
+    min_hops: 3
+    max_span_hours: 48
+    weight: 0.15
+
+  circular_flow:
+    enabled: true
+    # A -> B -> ... -> A money loop detected in the graph
+    max_cycle_length: 6
+    weight: 0.15
+
+  mule_account:
+    enabled: true
+    # Many-in / rapid-out with high counterparty fan-in
+    min_fan_in: 5
+    max_hold_minutes: 120
+    min_forwarded_pct: 0.70
+    weight: 0.15
+
+  call_transfer_coincidence:
+    enabled: true
+    # The signature fusion pattern: call + online(IP) + transfer within window
+    window_minutes: 10                      # mirrors correlation.default_window_minutes
+    weight: 0.15
+
+# Composite risk score (0-100). ML anomaly score blended with rule hits.
+risk_score:
+  ml_weight: 0.30                           # Isolation Forest contribution
+  rules_weight: 0.70                        # weighted rule hits contribution
+  bands:
+    low: [0, 39]
+    medium: [40, 69]
+    high: [70, 100]
+
+ml:
+  isolation_forest:
+    enabled: true
+    contamination: 0.05                     # expected anomaly fraction (tune on data)
+    random_state: 42

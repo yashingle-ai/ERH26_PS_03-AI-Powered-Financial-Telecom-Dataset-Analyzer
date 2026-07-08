@@ -1,0 +1,461 @@
+[
+  {
+    "type": "call_transfer_coincidence",
+    "ring": 0,
+    "participants": [
+      "P0026",
+      "P0016"
+    ],
+    "identifiers": {
+      "caller": "+919394731217",
+      "callee": "+917474517123",
+      "ip": "189.188.183.16",
+      "accounts": [
+        "55188442258",
+        "51604817549651",
+        "98593174612"
+      ],
+      "phones": [
+        "+919394731217",
+        "+917474517123"
+      ]
+    },
+    "evidence": {
+      "call_time": "2026-06-15T05:52:23+05:30",
+      "transfer_time": "2026-06-15T05:56:23+05:30",
+      "transfer_ref": "100000129582",
+      "amount": 621257.9
+    },
+    "description": "Call from organizer to launderer; launderer online from IP; transfer within window W."
+  },
+  {
+    "type": "structuring",
+    "ring": 0,
+    "participants": [
+      "P0022"
+    ],
+    "identifiers": {
+      "account": "222927065379",
+      "accounts": [
+        "222927065379"
+      ],
+      "phones": [
+        "+917141888059"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000129631",
+        "100000129688",
+        "100000129784",
+        "100000129821",
+        "100000129891",
+        "100000129984",
+        "100000130078"
+      ],
+      "count": 7,
+      "band": "just below reporting threshold"
+    },
+    "description": "7 transfers just below INR 1000000 into one account."
+  },
+  {
+    "type": "rapid_in_out",
+    "ring": 0,
+    "participants": [
+      "P0020"
+    ],
+    "identifiers": {
+      "account": "64160529751613",
+      "accounts": [
+        "64160529751613",
+        "16453521818835"
+      ],
+      "phones": [
+        "+916606071596"
+      ]
+    },
+    "evidence": {
+      "in_ref": "100000130140",
+      "out_ref": "100000130188",
+      "amount": 674101.24
+    },
+    "description": "Funds credited then ~95% forwarded within minutes (pass-through)."
+  },
+  {
+    "type": "layering",
+    "ring": 0,
+    "participants": [
+      "P0026",
+      "P0016",
+      "P0022",
+      "P0020",
+      "P0006"
+    ],
+    "identifiers": {
+      "accounts": [
+        "55188442258",
+        "51604817549651",
+        "98593174612",
+        "222927065379",
+        "64160529751613",
+        "16453521818835",
+        "433036541458"
+      ],
+      "phones": [
+        "+919394731217",
+        "+917474517123",
+        "+917141888059",
+        "+916606071596",
+        "+918634216073"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000130209",
+        "100000130213",
+        "100000130292",
+        "100000130374"
+      ],
+      "hops": 4
+    },
+    "description": "Funds layered across 5 accounts in quick succession."
+  },
+  {
+    "type": "circular_flow",
+    "ring": 0,
+    "participants": [
+      "P0022",
+      "P0020",
+      "P0006"
+    ],
+    "identifiers": {
+      "accounts": [
+        "222927065379",
+        "64160529751613",
+        "16453521818835",
+        "433036541458"
+      ],
+      "phones": [
+        "+917141888059",
+        "+916606071596",
+        "+918634216073"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000130446",
+        "100000130519",
+        "100000130526"
+      ],
+      "cycle_length": 3
+    },
+    "description": "Money loops A->...->A across 3 accounts."
+  },
+  {
+    "type": "call_transfer_coincidence",
+    "ring": 1,
+    "participants": [
+      "P0009",
+      "P0017"
+    ],
+    "identifiers": {
+      "caller": "+917046537556",
+      "callee": "+918317139005",
+      "ip": "34.164.75.17",
+      "accounts": [
+        "00330923271937",
+        "99124190496",
+        "04228421020539"
+      ],
+      "phones": [
+        "+917046537556",
+        "+918641708053",
+        "+918317139005",
+        "+917293183933"
+      ]
+    },
+    "evidence": {
+      "call_time": "2026-06-09T08:42:30+05:30",
+      "transfer_time": "2026-06-09T08:48:30+05:30",
+      "transfer_ref": "100000130569",
+      "amount": 565853.19
+    },
+    "description": "Call from organizer to launderer; launderer online from IP; transfer within window W."
+  },
+  {
+    "type": "structuring",
+    "ring": 1,
+    "participants": [
+      "P0024"
+    ],
+    "identifiers": {
+      "account": "80670654051531",
+      "accounts": [
+        "80670654051531",
+        "05852772217"
+      ],
+      "phones": [
+        "+918396218518"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000130634",
+        "100000130710",
+        "100000130778",
+        "100000130832",
+        "100000130896"
+      ],
+      "count": 5,
+      "band": "just below reporting threshold"
+    },
+    "description": "5 transfers just below INR 1000000 into one account."
+  },
+  {
+    "type": "rapid_in_out",
+    "ring": 1,
+    "participants": [
+      "P0007"
+    ],
+    "identifiers": {
+      "account": "680443699577",
+      "accounts": [
+        "680443699577",
+        "72148951343320"
+      ],
+      "phones": [
+        "+919564823662"
+      ]
+    },
+    "evidence": {
+      "in_ref": "100000130925",
+      "out_ref": "100000130943",
+      "amount": 650340.66
+    },
+    "description": "Funds credited then ~95% forwarded within minutes (pass-through)."
+  },
+  {
+    "type": "layering",
+    "ring": 1,
+    "participants": [
+      "P0009",
+      "P0017",
+      "P0024",
+      "P0007",
+      "P0002"
+    ],
+    "identifiers": {
+      "accounts": [
+        "00330923271937",
+        "99124190496",
+        "04228421020539",
+        "80670654051531",
+        "05852772217",
+        "680443699577",
+        "72148951343320",
+        "32528809570154",
+        "11718227824896"
+      ],
+      "phones": [
+        "+917046537556",
+        "+918641708053",
+        "+918317139005",
+        "+917293183933",
+        "+918396218518",
+        "+919564823662",
+        "+919270482814"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000130993",
+        "100000131009",
+        "100000131018",
+        "100000131074"
+      ],
+      "hops": 4
+    },
+    "description": "Funds layered across 5 accounts in quick succession."
+  },
+  {
+    "type": "circular_flow",
+    "ring": 1,
+    "participants": [
+      "P0024",
+      "P0007",
+      "P0002"
+    ],
+    "identifiers": {
+      "accounts": [
+        "80670654051531",
+        "05852772217",
+        "680443699577",
+        "72148951343320",
+        "32528809570154",
+        "11718227824896"
+      ],
+      "phones": [
+        "+918396218518",
+        "+919564823662",
+        "+919270482814"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000131081",
+        "100000131119",
+        "100000131134"
+      ],
+      "cycle_length": 3
+    },
+    "description": "Money loops A->...->A across 3 accounts."
+  },
+  {
+    "type": "call_transfer_coincidence",
+    "ring": 2,
+    "participants": [
+      "P0015",
+      "P0005"
+    ],
+    "identifiers": {
+      "caller": "+916969379237",
+      "callee": "+916841241182",
+      "ip": "172.79.121.222",
+      "accounts": [
+        "407482175946",
+        "367136959440",
+        "35348740164005"
+      ],
+      "phones": [
+        "+916969379237",
+        "+916841241182"
+      ]
+    },
+    "evidence": {
+      "call_time": "2026-06-09T06:35:05+05:30",
+      "transfer_time": "2026-06-09T06:41:05+05:30",
+      "transfer_ref": "100000131146",
+      "amount": 367539.13
+    },
+    "description": "Call from organizer to launderer; launderer online from IP; transfer within window W."
+  },
+  {
+    "type": "structuring",
+    "ring": 2,
+    "participants": [
+      "P0014"
+    ],
+    "identifiers": {
+      "account": "87026217459",
+      "accounts": [
+        "87026217459"
+      ],
+      "phones": [
+        "+919662702895"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000131194",
+        "100000131247",
+        "100000131320",
+        "100000131384",
+        "100000131458",
+        "100000131482"
+      ],
+      "count": 6,
+      "band": "just below reporting threshold"
+    },
+    "description": "6 transfers just below INR 1000000 into one account."
+  },
+  {
+    "type": "rapid_in_out",
+    "ring": 2,
+    "participants": [
+      "P0023"
+    ],
+    "identifiers": {
+      "account": "05152204727",
+      "accounts": [
+        "05152204727"
+      ],
+      "phones": [
+        "+919506068536"
+      ]
+    },
+    "evidence": {
+      "in_ref": "100000131553",
+      "out_ref": "100000131576",
+      "amount": 760875.0
+    },
+    "description": "Funds credited then ~95% forwarded within minutes (pass-through)."
+  },
+  {
+    "type": "layering",
+    "ring": 2,
+    "participants": [
+      "P0015",
+      "P0005",
+      "P0014",
+      "P0023",
+      "P0004"
+    ],
+    "identifiers": {
+      "accounts": [
+        "407482175946",
+        "367136959440",
+        "35348740164005",
+        "87026217459",
+        "05152204727",
+        "91361939909"
+      ],
+      "phones": [
+        "+916969379237",
+        "+916841241182",
+        "+919662702895",
+        "+919506068536",
+        "+918009788208"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000131646",
+        "100000131647",
+        "100000131670",
+        "100000131748"
+      ],
+      "hops": 4
+    },
+    "description": "Funds layered across 5 accounts in quick succession."
+  },
+  {
+    "type": "circular_flow",
+    "ring": 2,
+    "participants": [
+      "P0014",
+      "P0023",
+      "P0004"
+    ],
+    "identifiers": {
+      "accounts": [
+        "87026217459",
+        "05152204727",
+        "91361939909"
+      ],
+      "phones": [
+        "+919662702895",
+        "+919506068536",
+        "+918009788208"
+      ]
+    },
+    "evidence": {
+      "refs": [
+        "100000131845",
+        "100000131908",
+        "100000131994"
+      ],
+      "cycle_length": 3
+    },
+    "description": "Money loops A->...->A across 3 accounts."
+  }
+]

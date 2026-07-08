@@ -1,0 +1,36 @@
+# Generic CDR mapping profile (FR-2, FR-4) -> canonical Event(CALL) (Doc 06 §6)
+profile:
+  id: cdr_generic
+  source: CDR
+  event_type: CALL
+  match:
+    required_any: ["Calling Party Number", "A-Party", "Caller", "MSISDN"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["Calling Party Number", "A-Party", "Caller", "Calling Number", "MSISDN"]
+    type: phone
+  counterparty_phone:
+    aliases: ["Called Party Number", "B-Party", "Callee", "Called Number"]
+    type: phone
+  timestamp_start:
+    aliases: ["Call Date", "Call Time", "Start Time", "Date/Time", "Timestamp"]
+    type: datetime
+  attributes.duration:
+    aliases: ["Duration", "Duration (sec)", "Call Duration"]
+    type: int
+  direction:
+    aliases: ["Call Type", "Type", "Direction"]
+    type: string          # MOC/MTC/SMS-O/SMS-T -> IN/OUT
+  imei:
+    aliases: ["IMEI"]
+    type: string
+  imsi:
+    aliases: ["IMSI"]
+    type: string
+  attributes.cell_id:
+    aliases: ["Cell ID", "CGI", "First Cell ID", "LAC-CI"]
+    type: string
+  attributes.location:
+    aliases: ["Tower Location", "Cell Site", "Location", "Lat-Long"]
+    type: string

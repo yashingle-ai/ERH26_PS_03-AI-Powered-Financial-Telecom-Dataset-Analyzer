@@ -1,0 +1,42 @@
+# Generic IPDR mapping profile (FR-3, FR-4) -> canonical Event(IP_SESSION) (Doc 06 §7)
+profile:
+  id: ipdr_generic
+  source: IPDR
+  event_type: IP_SESSION
+  match:
+    required_any: ["Subscriber ID", "MSISDN", "Private IP", "Assigned IP"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["Subscriber ID", "MSISDN", "Subscriber MSISDN"]
+    type: phone
+  ip_private:
+    aliases: ["Private IP", "Assigned IP", "Source IP"]
+    type: ip
+  ip_public:
+    aliases: ["Public IP", "NAT IP", "Translated IP"]
+    type: ip
+  attributes.port:
+    aliases: ["Source Port", "Port", "NAT Port", "Start Port"]
+    type: int
+  timestamp_start:
+    aliases: ["Session Start Time", "Start Time", "Start"]
+    type: datetime
+  timestamp_end:
+    aliases: ["Session End Time", "End Time", "End"]
+    type: datetime
+  attributes.bytes_up:
+    aliases: ["Uplink Bytes", "Bytes Up", "Data Up", "Uplink Volume"]
+    type: int
+  attributes.bytes_down:
+    aliases: ["Downlink Bytes", "Bytes Down", "Data Down", "Downlink Volume"]
+    type: int
+  attributes.dest_ip:
+    aliases: ["Destination IP", "Dest IP", "Server IP"]
+    type: ip
+  imei:
+    aliases: ["IMEI"]
+    type: string
+  imsi:
+    aliases: ["IMSI"]
+    type: string

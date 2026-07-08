@@ -1,0 +1,185 @@
+{
+  "dataset": "ERakshak synthetic \u2014 smoke",
+  "source": "tools/synthetic_data_generator (self-generated)",
+  "license": "Synthetic \u2014 free for project use; contains no real personal data",
+  "download_url": null,
+  "version": "1.0",
+  "generated_with": {
+    "tier": "smoke",
+    "seed": 42,
+    "persons": 8,
+    "days": 14,
+    "fraud_rings": 1
+  },
+  "schema": "Maps to canonical model in research/06_data_understanding.md \u00a74",
+  "preprocessing": "None \u2014 raw generated files as an operator/bank would export",
+  "counts": {
+    "bank": 11,
+    "cdr": 4,
+    "ipdr": 4
+  },
+  "ground_truth_scenarios": 5,
+  "known_limitations": [
+    "Schemas are modeled (research/06), not from real operator/bank exports (Q1-Q3).",
+    "Fraud patterns are stylized; real laundering is noisier.",
+    "Finance<->telecom bridge is guaranteed by construction; real data may be weaker."
+  ],
+  "files": {
+    "bank": [
+      {
+        "file": "bank/axis_01065133387262.xlsx",
+        "format": "xlsx",
+        "bank": "Axis Bank",
+        "ifsc": "UTIB0392075",
+        "account_no": "01065133387262",
+        "holder": "Ayushman Chander",
+        "mobile": "+919376311656",
+        "rows": 28
+      },
+      {
+        "file": "bank/state_11718227824896.csv",
+        "format": "csv",
+        "bank": "State Bank of India",
+        "ifsc": "SBIN0322086",
+        "account_no": "11718227824896",
+        "holder": "Gagan Sami",
+        "mobile": "+919270482814",
+        "rows": 26
+      },
+      {
+        "file": "bank/icici_19283276483503.pdf",
+        "format": "pdf",
+        "bank": "ICICI Bank",
+        "ifsc": "ICIC0961722",
+        "account_no": "19283276483503",
+        "holder": "Udant Dewan",
+        "mobile": "+917164752553",
+        "rows": 28
+      },
+      {
+        "file": "bank/punjab_32528809570154.xlsx",
+        "format": "xlsx",
+        "bank": "Punjab National Bank",
+        "ifsc": "PUNB0351083",
+        "account_no": "32528809570154",
+        "holder": "Gagan Sami",
+        "mobile": "+919270482814",
+        "rows": 26
+      },
+      {
+        "file": "bank/hdfc_33890838637.csv",
+        "format": "csv",
+        "bank": "HDFC Bank",
+        "ifsc": "HDFC0717889",
+        "account_no": "33890838637",
+        "holder": "Aryan Maharaj",
+        "mobile": "+916433218196",
+        "rows": 32
+      },
+      {
+        "file": "bank/icici_35348740164005.pdf",
+        "format": "pdf",
+        "bank": "ICICI Bank",
+        "ifsc": "ICIC0908577",
+        "account_no": "35348740164005",
+        "holder": "Rushil Saini",
+        "mobile": "+916841241182",
+        "rows": 26
+      },
+      {
+        "file": "bank/icici_413953767242.xlsx",
+        "format": "xlsx",
+        "bank": "ICICI Bank",
+        "ifsc": "ICIC0358607",
+        "account_no": "413953767242",
+        "holder": "Udant Dewan",
+        "mobile": "+917164752553",
+        "rows": 25
+      },
+      {
+        "file": "bank/axis_433036541458.csv",
+        "format": "csv",
+        "bank": "Axis Bank",
+        "ifsc": "UTIB0519093",
+        "account_no": "433036541458",
+        "holder": "Saumya Mall",
+        "mobile": "+918634216073",
+        "rows": 34
+      },
+      {
+        "file": "bank/punjab_680443699577.pdf",
+        "format": "pdf",
+        "bank": "Punjab National Bank",
+        "ifsc": "PUNB0563638",
+        "account_no": "680443699577",
+        "holder": "Nathaniel Sami",
+        "mobile": "+919564823662",
+        "rows": 25
+      },
+      {
+        "file": "bank/state_72148951343320.xlsx",
+        "format": "xlsx",
+        "bank": "State Bank of India",
+        "ifsc": "SBIN0148458",
+        "account_no": "72148951343320",
+        "holder": "Nathaniel Sami",
+        "mobile": "+919564823662",
+        "rows": 25
+      },
+      {
+        "file": "bank/state_91361939909.csv",
+        "format": "csv",
+        "bank": "State Bank of India",
+        "ifsc": "SBIN0185965",
+        "account_no": "91361939909",
+        "holder": "Viraj Tiwari",
+        "mobile": "+918009788208",
+        "rows": 30
+      }
+    ],
+    "cdr": [
+      {
+        "file": "cdr/cdr_vi.csv",
+        "operator": "vi",
+        "rows": 40
+      },
+      {
+        "file": "cdr/cdr_bsnl.csv",
+        "operator": "bsnl",
+        "rows": 29
+      },
+      {
+        "file": "cdr/cdr_airtel.csv",
+        "operator": "airtel",
+        "rows": 25
+      },
+      {
+        "file": "cdr/cdr_jio.csv",
+        "operator": "jio",
+        "rows": 27
+      }
+    ],
+    "ipdr": [
+      {
+        "file": "ipdr/ipdr_vi.csv",
+        "operator": "vi",
+        "rows": 24
+      },
+      {
+        "file": "ipdr/ipdr_bsnl.csv",
+        "operator": "bsnl",
+        "rows": 32
+      },
+      {
+        "file": "ipdr/ipdr_airtel.csv",
+        "operator": "airtel",
+        "rows": 41
+      },
+      {
+        "file": "ipdr/ipdr_jio.csv",
+        "operator": "jio",
+        "rows": 24
+      }
+    ]
+  }
+}

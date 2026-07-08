@@ -1,0 +1,43 @@
+# ERakshak — pinned dependencies (review fix H4: reproducible builds)
+# Regenerate with: ./.venv/bin/pip freeze  (then curate to direct deps below)
+
+# --- Data & parsing ---
+pandas==3.0.3
+numpy==2.4.6
+openpyxl==3.1.5
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+pdfplumber==0.11.10
+
+# --- Synthetic data ---
+Faker==40.28.1
+
+# --- Canonical schema / persistence ---
+SQLAlchemy==2.0.51
+pydantic==2.13.4
+
+# --- Graph & ML ---
+networkx==3.6.1
+scikit-learn==1.9.0
+joblib==1.5.3
+
+# --- Reporting ---
+reportlab==5.0.0
+python-docx==1.2.0
+Jinja2==3.1.6
+
+# --- API + security ---
+fastapi==0.139.0
+uvicorn==0.50.2
+PyJWT==2.13.0
+bcrypt==5.0.0
+
+# --- UI ---
+streamlit==1.59.0
+plotly==6.8.0
+matplotlib==3.11.0
+
+# --- Dev / test ---
+pytest==9.1.1
+httpx==0.28.1
+ruff==0.15.20
