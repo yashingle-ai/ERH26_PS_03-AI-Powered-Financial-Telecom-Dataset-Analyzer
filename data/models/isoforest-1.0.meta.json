@@ -13,7 +13,7 @@
     "max_rapid_forward",
     "coincidence_count"
   ],
-  "n_samples": 8,
+  "n_samples": 30,
   "n_features": 11,
   "contamination": 0.05,
   "random_state": 42

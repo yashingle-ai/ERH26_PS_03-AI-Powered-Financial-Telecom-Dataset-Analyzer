@@ -13,7 +13,12 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+import os
+from collections import Counter
+from datetime import date, datetime
+
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -35,6 +40,25 @@ DATASETS = ROOT / "datasets" / "raw"
 app = FastAPI(title="ERakshak API",
               description="AI-Powered Financial & Telecom Dataset Analyzer (ERH26_PS_03)",
               version="1.0.0")
+
+_cors_origins = [
+    o.strip()
+    for o in os.getenv(
+        "ERAKSHAK_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:4173,http://127.0.0.1:4173",
+    ).split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 v1 = APIRouter(prefix="/v1")
 
 
@@ -65,6 +89,122 @@ class AnalyzeRequest(BaseModel):
     dataset: str
     window_minutes: int = 10
     persist: bool = False
+
+
+def _iso(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _file_counts(inv) -> dict:
+    counts = Counter((pf.source_type or "UNKNOWN").upper() for pf in inv.parsed_files)
+    return {
+        "bank": counts.get("BANK", 0),
+        "cdr": counts.get("CDR", 0),
+        "ipdr": counts.get("IPDR", 0),
+        "other": sum(v for k, v in counts.items() if k not in {"BANK", "CDR", "IPDR"}),
+    }
+
+
+def _money_flow_series(inv) -> list[dict]:
+    buckets: dict[str, dict] = {}
+    for ev in inv.events:
+        if ev.get("event_type") != "TRANSACTION":
+            continue
+        ts = ev.get("timestamp_start")
+        if not isinstance(ts, datetime):
+            continue
+        key = ts.date().isoformat()
+        if key not in buckets:
+            buckets[key] = {"t": ts.strftime("%b %d"), "inflow": 0.0, "outflow": 0.0, "_d": key}
+        amt = float(ev.get("amount") or 0)
+        direction = (ev.get("direction") or "").upper()
+        if direction in {"CREDIT", "IN", "CR"}:
+            buckets[key]["inflow"] += amt
+        else:
+            buckets[key]["outflow"] += amt
+    series = []
+    for key in sorted(buckets):
+        vals = buckets[key]
+        series.append({
+            "t": vals["t"],
+            "inflow": round(vals["inflow"] / 1e7, 3),
+            "outflow": round(vals["outflow"] / 1e7, 3),
+        })
+    return series[:30]
+
+
+def _serialize_identifiers(entity: dict | None) -> list[dict]:
+    if not entity:
+        return []
+    idents = entity.get("identifiers") or set()
+    rows = []
+    for item in idents:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            kind, value = item[0], item[1]
+        else:
+            continue
+        rows.append({"kind": str(kind), "value": str(value)})
+    rows.sort(key=lambda r: (r["kind"], r["value"]))
+    return rows
+
+
+def _enrich_risk(row: dict, inv) -> dict:
+    eid = row.get("entity_id")
+    ent = inv.entities.get(eid, {}) if eid else {}
+    feats = row.get("features") or {}
+    out = dict(row)
+    out["identifiers"] = _serialize_identifiers(ent)
+    out["types"] = sorted(str(t) for t in (ent.get("types") or set()))
+    out["external"] = bool(ent.get("external"))
+    out["event_count"] = int(
+        (feats.get("txn_count") or 0)
+        + (feats.get("coincidence_count") or 0)
+    )
+    # Prefer raw txn volume when present
+    out["volume"] = float((feats.get("total_in") or 0) + (feats.get("total_out") or 0))
+    out["txn_count"] = int(feats.get("txn_count") or 0)
+    return out
+
+
+def _serialize_event(ev: dict, entities: dict) -> dict:
+    ts = ev.get("timestamp_start")
+    minute = None
+    if isinstance(ts, datetime):
+        minute = ts.hour * 60 + ts.minute
+    prov = ev.get("provenance") or {}
+    primary = ev.get("primary")
+    attrs = dict(ev.get("attributes") or {})
+    if ev.get("amount") is not None:
+        attrs.setdefault("amount", ev.get("amount"))
+    if ev.get("direction"):
+        attrs.setdefault("direction", ev.get("direction"))
+    if isinstance(primary, (tuple, list)) and len(primary) >= 2:
+        attrs.setdefault("primary", f"{primary[0]}:{primary[1]}")
+    eid = ev.get("entity_id")
+    return {
+        "id": f"{ev.get('event_type')}:{_iso(ts)}:{eid}:{prov.get('row')}",
+        "event_type": ev.get("event_type"),
+        "timestamp": _iso(ts),
+        "timestamp_end": _iso(ev.get("timestamp_end")),
+        "minute": minute,
+        "entity_id": eid,
+        "entity_label": (entities.get(eid) or {}).get("label") if eid else None,
+        "counterparty_entity_id": ev.get("counterparty_entity_id"),
+        "amount": ev.get("amount"),
+        "direction": ev.get("direction"),
+        "attributes": attrs,
+        "provenance": {
+            "source_file": prov.get("source_file") or prov.get("file"),
+            "sheet": prov.get("sheet"),
+            "row": prov.get("row"),
+            "offset": prov.get("offset"),
+            "profile": prov.get("profile"),
+        },
+    }
 
 
 # ---- public ----
@@ -99,10 +239,15 @@ def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
         from backend.app.persistence import store
         store.persist_investigation(inv, dataset=req.dataset)
         audit("persist", user=user["username"], dataset=req.dataset)
+    top = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])[:20]
     return {
+        "dataset": req.dataset,
+        "window_minutes": req.window_minutes,
         "summary": inv.summary(),
+        "file_counts": _file_counts(inv),
+        "money_flow_series": _money_flow_series(inv),
         "correlation_hits": inv.correlation_hits[:100],
-        "top_risk": sorted(inv.risk.values(), key=lambda r: -r["risk_score"])[:20],
+        "top_risk": [_enrich_risk(r, inv) for r in top],
     }
 
 
@@ -111,7 +256,26 @@ def entities(ds: str, window: int = 10, limit: int = Query(50, le=500), offset: 
              user=Depends(require_role("analyst"))):
     inv = _analyze(ds, window)
     rows = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])
-    return {"total": len(rows), "items": rows[offset: offset + limit]}
+    items = [_enrich_risk(r, inv) for r in rows[offset: offset + limit]]
+    return {"total": len(rows), "items": items}
+
+
+@v1.get("/events/{ds}")
+def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: int = 0,
+           event_type: str | None = None, user=Depends(require_role("analyst"))):
+    inv = _analyze(ds, window)
+    rows = sorted(
+        inv.events,
+        key=lambda e: e.get("timestamp_start") or datetime.min,
+    )
+    if event_type:
+        want = event_type.upper()
+        rows = [e for e in rows if (e.get("event_type") or "").upper() == want]
+    page = rows[offset: offset + limit]
+    return {
+        "total": len(rows),
+        "items": [_serialize_event(e, inv.entities) for e in page],
+    }
 
 
 @v1.get("/graph/{ds}")

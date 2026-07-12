@@ -27,7 +27,7 @@
   "files": {
     "bank": [
       {
-        "file": "bank/axis_01065133387262.xlsx",
+        "file": "bank\\axis_01065133387262.xlsx",
         "format": "xlsx",
         "bank": "Axis Bank",
         "ifsc": "UTIB0392075",
@@ -37,7 +37,7 @@
         "rows": 28
       },
       {
-        "file": "bank/state_11718227824896.csv",
+        "file": "bank\\state_11718227824896.csv",
         "format": "csv",
         "bank": "State Bank of India",
         "ifsc": "SBIN0322086",
@@ -47,7 +47,7 @@
         "rows": 26
       },
       {
-        "file": "bank/icici_19283276483503.pdf",
+        "file": "bank\\icici_19283276483503.pdf",
         "format": "pdf",
         "bank": "ICICI Bank",
         "ifsc": "ICIC0961722",
@@ -57,7 +57,7 @@
         "rows": 28
       },
       {
-        "file": "bank/punjab_32528809570154.xlsx",
+        "file": "bank\\punjab_32528809570154.xlsx",
         "format": "xlsx",
         "bank": "Punjab National Bank",
         "ifsc": "PUNB0351083",
@@ -67,7 +67,7 @@
         "rows": 26
       },
       {
-        "file": "bank/hdfc_33890838637.csv",
+        "file": "bank\\hdfc_33890838637.csv",
         "format": "csv",
         "bank": "HDFC Bank",
         "ifsc": "HDFC0717889",
@@ -77,7 +77,7 @@
         "rows": 32
       },
       {
-        "file": "bank/icici_35348740164005.pdf",
+        "file": "bank\\icici_35348740164005.pdf",
         "format": "pdf",
         "bank": "ICICI Bank",
         "ifsc": "ICIC0908577",
@@ -87,7 +87,7 @@
         "rows": 26
       },
       {
-        "file": "bank/icici_413953767242.xlsx",
+        "file": "bank\\icici_413953767242.xlsx",
         "format": "xlsx",
         "bank": "ICICI Bank",
         "ifsc": "ICIC0358607",
@@ -97,7 +97,7 @@
         "rows": 25
       },
       {
-        "file": "bank/axis_433036541458.csv",
+        "file": "bank\\axis_433036541458.csv",
         "format": "csv",
         "bank": "Axis Bank",
         "ifsc": "UTIB0519093",
@@ -107,7 +107,7 @@
         "rows": 34
       },
       {
-        "file": "bank/punjab_680443699577.pdf",
+        "file": "bank\\punjab_680443699577.pdf",
         "format": "pdf",
         "bank": "Punjab National Bank",
         "ifsc": "PUNB0563638",
@@ -117,7 +117,7 @@
         "rows": 25
       },
       {
-        "file": "bank/state_72148951343320.xlsx",
+        "file": "bank\\state_72148951343320.xlsx",
         "format": "xlsx",
         "bank": "State Bank of India",
         "ifsc": "SBIN0148458",
@@ -127,7 +127,7 @@
         "rows": 25
       },
       {
-        "file": "bank/state_91361939909.csv",
+        "file": "bank\\state_91361939909.csv",
         "format": "csv",
         "bank": "State Bank of India",
         "ifsc": "SBIN0185965",
@@ -139,44 +139,44 @@
     ],
     "cdr": [
       {
-        "file": "cdr/cdr_vi.csv",
+        "file": "cdr\\cdr_vi.csv",
         "operator": "vi",
         "rows": 40
       },
       {
-        "file": "cdr/cdr_bsnl.csv",
+        "file": "cdr\\cdr_bsnl.csv",
         "operator": "bsnl",
         "rows": 29
       },
       {
-        "file": "cdr/cdr_airtel.csv",
+        "file": "cdr\\cdr_airtel.csv",
         "operator": "airtel",
         "rows": 25
       },
       {
-        "file": "cdr/cdr_jio.csv",
+        "file": "cdr\\cdr_jio.csv",
         "operator": "jio",
         "rows": 27
       }
     ],
     "ipdr": [
       {
-        "file": "ipdr/ipdr_vi.csv",
+        "file": "ipdr\\ipdr_vi.csv",
         "operator": "vi",
         "rows": 24
       },
       {
-        "file": "ipdr/ipdr_bsnl.csv",
+        "file": "ipdr\\ipdr_bsnl.csv",
         "operator": "bsnl",
         "rows": 32
       },
       {
-        "file": "ipdr/ipdr_airtel.csv",
+        "file": "ipdr\\ipdr_airtel.csv",
         "operator": "airtel",
         "rows": 41
       },
       {
-        "file": "ipdr/ipdr_jio.csv",
+        "file": "ipdr\\ipdr_jio.csv",
         "operator": "jio",
         "rows": 24
       }

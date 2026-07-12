@@ -12,22 +12,54 @@ suspicious money-flow / communication patterns, and produces investigation-ready
 
 ## Status
 
-Build strategy: **core-first, incremental with review gates, Streamlit-first UI** (later React+D3).
-Current increment: **Phase 0 — foundations + synthetic data generator**. See
-[`docs/progress.md`](docs/progress.md).
+Backend pipeline + FastAPI (`/v1`) + React investigator UI (`frontend/`). Streamlit dashboard still available. See [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) and [`docs/progress.md`](docs/progress.md).
 
-## Quick start (Phase 0)
+## Quick start (end-to-end)
+
+### 1. Backend API
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# Unix:    source .venv/bin/activate
 pip install -r requirements.txt
 
-# Generate a synthetic, fused, labeled dataset (Bank + CDR + IPDR)
+# Optional: regenerate smoke data
 python -m tools.synthetic_data_generator.generate --tier smoke --out datasets/raw/smoke
+
+# Stable local credentials (required for UI login)
+# Windows PowerShell:
+#   $env:ERAKSHAK_JWT_SECRET="dev-secret"
+#   $env:ERAKSHAK_ADMIN_PASSWORD="adminpass"
+#   $env:ERAKSHAK_ANALYST_PASSWORD="analystpass"
+# Unix:
+#   export ERAKSHAK_JWT_SECRET=dev-secret
+#   export ERAKSHAK_ADMIN_PASSWORD=adminpass
+#   export ERAKSHAK_ANALYST_PASSWORD=analystpass
+
+uvicorn backend.app.api.main:app --reload --port 8000
 ```
 
-Outputs land in `datasets/raw/<tier>/` with a `ground_truth.json` and per-file `metadata`.
+API docs: http://127.0.0.1:8000/docs  
+Login users: `admin` / `adminpass` or `analyst` / `analystpass`
+
+### 2. Frontend UI
+
+```bash
+cd frontend
+cp .env.example .env   # Windows: copy .env.example .env
+npm install
+npm run dev
+```
+
+Open the Vite URL (often http://localhost:8080 or :5173). Sign in with the API credentials above, then open dataset **smoke**.
+
+### 3. CLI / Streamlit (optional)
+
+```bash
+python scripts/run_pipeline.py datasets/raw/smoke
+streamlit run backend/app/dashboard/app.py
+```
 
 ## Repository layout
 
@@ -35,10 +67,11 @@ Outputs land in `datasets/raw/<tier>/` with a `ground_truth.json` and per-file `
 |------|---------|
 | `research/` | Pre-implementation planning documents (00–12) |
 | `config/` | Externalized tunables + mapping profiles (window W, thresholds, layouts) |
-| `backend/app/` | Backend modules (ingestion, normalization, entity_resolution, correlation, detection, graph, search, reporting, api) |
-| `tools/synthetic_data_generator/` | Phase 0 dataset generator |
-| `datasets/` | raw / processed / intermediate / external / metadata |
-| `data/` | runtime uploads & report outputs (gitignored) |
+| `backend/app/` | Pipeline + FastAPI (`api/`) + Streamlit dashboard |
+| `frontend/` | React investigator UI (Lovable / TanStack Start) |
+| `tools/synthetic_data_generator/` | Labeled synthetic Bank + CDR + IPDR generator |
+| `datasets/` | raw / metadata datasets + ground truth |
+| `data/` | runtime DB / models / reports (local outputs gitignored) |
 | `docs/` | delivered docs + ADRs (`docs/decisions/`) |
 | `scripts/` | dev/ops helpers |
 
