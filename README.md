@@ -78,3 +78,9 @@ streamlit run backend/app/dashboard/app.py
 ## License
 
 Internal / hackathon project. Do not commit real case data.
+
+## the project is developed by :-
+Yash Ingle - u23ai062@coed.svnit.ac.in
+Himal Rana -  u23ai053@coed.svnit.ac.in
+Ankit Yadav -  u23ai039@coed.svnit.ac.in
+Tarun bhutra -  u23ai063@coed.svnit.ac.in
