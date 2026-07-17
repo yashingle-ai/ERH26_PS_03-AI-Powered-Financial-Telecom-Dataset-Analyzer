@@ -1,4 +1,4 @@
-@import "tailwindcss" source(none);
+@import "tailwindcss";
 @source "../src";
 @import "tw-animate-css";
 
@@ -159,7 +159,14 @@
   h1, h2, h3, h4 {
     letter-spacing: -0.01em;
   }
+
+  /* Smooth transitions on all interactive elements */
+  button, a, input, select, textarea {
+    transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  }
 }
+
+/* ─── Existing utilities ────────────────────────────────── */
 
 @utility grid-bg {
   background-image:
@@ -179,6 +186,8 @@
   font-feature-settings: "tnum", "zero";
 }
 
+/* ─── Animations ────────────────────────────────────────── */
+
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -193,4 +202,202 @@
 }
 @utility pulse-ring {
   animation: pulse-ring 1.8s ease-out infinite;
+}
+
+@utility hover-lift {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease, border-color 0.25s ease;
+  
+  &:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* ─── NEW: Phase 4 — Visual Polish Utilities ─────────── */
+
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+@utility card-elevated {
+  background-color: oklch(0.22 0.03 250 / 0.7);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.3), inset 0 1px 0 oklch(0.36 0.02 250 / 0.15);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover {
+    border-color: oklch(0.40 0.03 250);
+    box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4), inset 0 1px 0 oklch(0.36 0.02 250 / 0.15);
+  }
+}
+
+@utility data-row {
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: oklch(0.30 0.04 220 / 0.4);
+  }
+
+  &[data-selected="true"] {
+    background-color: oklch(0.72 0.11 190 / 0.1);
+    border-left: 2px solid var(--primary);
+  }
+}
+
+@utility section-divider {
+  border-top: 1px solid oklch(0.32 0.02 250 / 0.6);
+  padding-top: 1rem;
+  margin-top: 1.5rem;
+}
+
+/* Active navigation indicator — used by sidebar */
+@utility nav-active {
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 60%;
+    border-radius: 0 2px 2px 0;
+    background-color: var(--primary);
+  }
+}
+
+/* ─── NEW: Phase 5 — Animation Utilities ─────────────── */
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@utility animate-slide-in {
+  animation: slide-in-right 0.25s ease-out both;
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@utility animate-scale-in {
+  animation: scale-in 0.2s ease-out both;
+}
+
+@keyframes glow-pulse {
+  0%   { box-shadow: 0 0 0 0 oklch(0.72 0.11 190 / 0.5); }
+  50%  { box-shadow: 0 0 12px 4px oklch(0.72 0.11 190 / 0.25); }
+  100% { box-shadow: 0 0 0 0 oklch(0.72 0.11 190 / 0); }
+}
+@utility animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes slide-up-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@utility animate-slide-up {
+  animation: slide-up-in 0.3s ease-out both;
+}
+
+/* Graph-specific: smooth transform transitions */
+@utility graph-transition {
+  transition: transform 0.5s ease-out, opacity 0.3s ease;
+}
+
+/* Tooltip appearance */
+@utility tooltip-appear {
+  animation: scale-in 0.15s ease-out both;
+}
+
+/* Panel transitions */
+@utility panel-transition {
+  transition: all 0.2s ease;
+}
+
+/* Fullscreen mode — hides sidebar + topbar */
+.fullscreen-mode aside,
+.fullscreen-mode header,
+.fullscreen-mode .sidebar-trigger {
+  display: none !important;
+}
+
+.fullscreen-mode .SidebarInset,
+.fullscreen-mode [data-sidebar="inset"] {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+.fullscreen-mode main {
+  padding: 0 !important;
+}
+
+/* ─── Scrollbar styling ────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.36 0.02 250);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.42 0.02 250);
+}
+
+/* ─── Print Styles ─────────────────────────────────────── */
+
+@media print {
+  /* Hide UI elements not meant for printing */
+  aside, 
+  header, 
+  .no-print,
+  #command-palette-container,
+  div[role="dialog"] {
+    display: none !important;
+  }
+
+  /* Reset layout for printing */
+  body, main, .SidebarInset {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: auto !important;
+  }
+
+  /* Ensure the report container spans the full page */
+  .print-container {
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Ensure text colors are readable on white */
+  .print-container * {
+    color: black !important;
+    border-color: #ccc !important;
+  }
+
+  @page {
+    margin: 1.5cm;
+    size: A4 portrait;
+  }
 }

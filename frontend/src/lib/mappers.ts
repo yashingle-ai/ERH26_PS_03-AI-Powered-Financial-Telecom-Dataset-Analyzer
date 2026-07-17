@@ -5,17 +5,9 @@ import type {
   GraphPayload,
   RiskEntity,
 } from "@/lib/api";
-import type { Case, CorrelationHit, Detection, Entity, Event, GraphEdge, GraphNode, Identifier, RiskBand } from "@/lib/mock-data";
-import { riskBand } from "@/lib/mock-data";
+import type { Case, CorrelationHit, Detection, Entity, Event, GraphEdge, GraphNode, Identifier, RiskBand } from "@/lib/types";
+import { riskBand, ID_KIND_MAP, EDGE_KIND_MAP, EVENT_TYPE_MAP } from "@/lib/constants";
 
-const ID_KIND_MAP: Record<string, Identifier["kind"]> = {
-  ACCOUNT_NO: "ACCOUNT_NO",
-  PHONE: "PHONE",
-  UPI_ID: "UPI",
-  UPI: "UPI",
-  IMEI: "IMEI",
-  IMSI: "IMSI",
-};
 
 export function mapIdentifiers(raw?: { kind: string; value: string }[]): Identifier[] {
   if (!raw?.length) return [];
@@ -49,7 +41,13 @@ export function mapEntity(row: RiskEntity): Entity {
       ? identifiers
       : [{ kind: "ACCOUNT_NO", value: row.entity_id }],
     risk: Number(row.risk_score || 0),
+    mlScore: Number(row.ml_score || 0),
     flags: (row.rule_flags || []).map((f) => f.rule),
+    ruleFlags: (row.rule_flags || []).map((f) => ({
+      rule: f.rule,
+      detail: f.detail || "",
+      weight: f.weight || 0,
+    })),
     events: Number(row.txn_count ?? row.event_count ?? row.features?.txn_count ?? 0),
     volume: Number(row.volume ?? 0),
   };
@@ -103,11 +101,6 @@ export function mapHit(hit: CorrelationHitDto, index: number): CorrelationHit {
 }
 
 export function mapEvent(ev: EventDto): Event {
-  const typeMap: Record<string, Event["type"]> = {
-    TRANSACTION: "txn",
-    CALL: "call",
-    IP_SESSION: "ip",
-  };
   const attrs: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(ev.attributes || {})) {
     if (v == null) continue;
@@ -128,7 +121,7 @@ export function mapEvent(ev: EventDto): Event {
 
   return {
     id: ev.id,
-    type: typeMap[ev.event_type] || "txn",
+    type: EVENT_TYPE_MAP[ev.event_type] || "txn",
     ts: ev.timestamp
       ? new Date(ev.timestamp).toLocaleTimeString("en-IN", { hour12: false })
       : "—",
@@ -166,14 +159,10 @@ export function layoutGraph(payload: GraphPayload): { nodes: GraphNode[]; edges:
   const edges: GraphEdge[] = payload.edges
     .filter((e) => ids.has(e.source) && ids.has(e.target))
     .map((e) => {
-      const kind =
-        e.kind === "MONEY_FLOW" ? "money" :
-        e.kind === "COMMUNICATION" ? "comm" :
-        "shared_id";
       return {
         from: e.source,
         to: e.target,
-        kind: kind as GraphEdge["kind"],
+        kind: (EDGE_KIND_MAP[e.kind] || "shared_id") as GraphEdge["kind"],
         weight: Number(e.count || e.amount || 1),
       };
     });

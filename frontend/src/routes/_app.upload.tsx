@@ -142,14 +142,49 @@ function UploadPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-surface/40 p-4 text-sm text-muted-foreground">
-        <div className="mb-2 flex items-center gap-2 text-foreground">
-          <KindIcon kind="bank" />
-          Expected layout
+      <div className="rounded-lg border border-border bg-surface/40 p-5">
+        <h3 className="mb-4 text-sm font-semibold text-foreground">Data formatting & folder layout</h3>
+        <div className="grid gap-6 md:grid-cols-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <KindIcon kind="bank" /> Bank Statements
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Place under <span className="text-mono text-primary">datasets/raw/{dataset || "<name>"}/bank/</span>
+            </p>
+            <ul className="ml-4 list-disc text-xs text-muted-foreground">
+              <li>Format: <code>.xlsx</code> or <code>.csv</code></li>
+              <li>Required columns: Date, Amount, Type (Cr/Dr), Narration, Account No</li>
+            </ul>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <KindIcon kind="cdr" /> Call Records (CDR)
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Place under <span className="text-mono text-primary">datasets/raw/{dataset || "<name>"}/cdr/</span>
+            </p>
+            <ul className="ml-4 list-disc text-xs text-muted-foreground">
+              <li>Format: <code>.csv</code> or <code>.txt</code></li>
+              <li>Required columns: Timestamp, Caller IMSI/Phone, Receiver Phone, Duration</li>
+            </ul>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <KindIcon kind="ip" /> IP Sessions (IPDR)
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Place under <span className="text-mono text-primary">datasets/raw/{dataset || "<name>"}/ipdr/</span>
+            </p>
+            <ul className="ml-4 list-disc text-xs text-muted-foreground">
+              <li>Format: <code>.csv</code></li>
+              <li>Required columns: Start Time, Source IP, Destination IP, Protocol, Bytes</li>
+            </ul>
+          </div>
         </div>
-        Place files like <span className="text-mono text-primary">datasets/raw/smoke/bank/*.xlsx</span>,{" "}
-        <span className="text-mono text-primary">…/cdr/*.csv</span>,{" "}
-        <span className="text-mono text-primary">…/ipdr/*.csv</span> then run the pipeline.
+        <div className="mt-5 rounded border border-[color:var(--risk-med)]/30 bg-[color:var(--risk-med)]/5 p-3 text-xs text-muted-foreground">
+          <span className="font-semibold text-[color:var(--risk-med)]">Note:</span> The pipeline parses raw files directly from the server disk. Ensure file names don't contain spaces. Once the files are in place, click <b>Run pipeline</b> to begin the ingestion and correlation process.
+        </div>
       </div>
     </div>
   );

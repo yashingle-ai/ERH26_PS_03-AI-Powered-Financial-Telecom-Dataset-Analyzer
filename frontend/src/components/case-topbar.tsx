@@ -9,11 +9,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Search, ChevronDown, Bell, LogOut, User, KeyRound } from "lucide-react";
-import { Input } from "@/components/ui/input";
+
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useDatasets } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
 import { clearSession, getUsername } from "@/lib/auth";
+import { toast } from "sonner";
 import type { ReactNode } from "react";
 
 export function CaseTopbar() {
@@ -74,21 +75,33 @@ export function CaseTopbar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <div className="relative ml-2 hidden max-w-md flex-1 md:block">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search account, phone, UPI, IMEI, entity…"
-          className="h-9 border-border bg-surface pl-8 text-mono text-[13px] placeholder:text-muted-foreground/60"
-        />
-      </div>
+      <button
+        onClick={() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }))}
+        aria-label="Search entities and pages"
+        className="relative ml-2 hidden h-9 items-center gap-2 rounded-md border border-border bg-surface px-3 text-left md:flex max-w-md flex-1"
+      >
+        <Search className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-mono text-[13px] text-muted-foreground/60">
+          Search entities, pages…
+        </span>
+        <kbd className="text-mono ml-auto rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          ⌘K
+        </kbd>
+      </button>
 
       <div className="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="relative h-9 w-9">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative h-9 w-9"
+          aria-label="Notifications"
+          onClick={() => toast.message("No unread notifications", { description: "You are up to date with case activity." })}
+        >
           <Bell className="h-4 w-4" />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-2">
+            <Button variant="ghost" size="sm" className="gap-2" aria-label="User menu">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/20 text-mono text-[11px] text-primary">
                 {initials}
               </span>
@@ -101,8 +114,8 @@ export function CaseTopbar() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem><User className="mr-2 h-4 w-4" />Profile</DropdownMenuItem>
-            <DropdownMenuItem><KeyRound className="mr-2 h-4 w-4" />API tokens</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => toast.message("User profile details coming soon")}><User className="mr-2 h-4 w-4" />Profile</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => toast.message("API token management coming soon")}><KeyRound className="mr-2 h-4 w-4" />API tokens</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut className="mr-2 h-4 w-4" />Sign out

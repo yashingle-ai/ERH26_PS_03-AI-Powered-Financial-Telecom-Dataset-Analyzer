@@ -32,16 +32,16 @@ const nav = [
     { title: "Upload & Ingest", url: "/upload", icon: Upload },
   ]},
   { section: "Analysis", items: [
-    { title: "Timeline", url: "/timeline", icon: Clock },
+    { title: "Timeline", url: "/timeline", icon: Clock, search: { entity: undefined } },
     { title: "Network graph", url: "/network", icon: Share2 },
-    { title: "Entities", url: "/entities", icon: Users },
+    { title: "Entities", url: "/entities", icon: Users, search: { id: undefined, rule: undefined } },
     { title: "Detections", url: "/detections", icon: ShieldAlert },
   ]},
   { section: "Output", items: [
     { title: "Reports", url: "/reports", icon: FileText },
     { title: "Settings", url: "/settings", icon: Settings },
   ]},
-];
+] as const;
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -80,7 +80,7 @@ export function AppSidebar() {
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
-                        <Link to={item.url} className="flex items-center gap-2">
+                        <Link to={item.url} search={("search" in item ? item.search : undefined) as any} className="flex items-center gap-2">
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
                         </Link>

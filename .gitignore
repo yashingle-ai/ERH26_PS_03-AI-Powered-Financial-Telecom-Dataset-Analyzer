@@ -30,11 +30,15 @@ frontend/.tanstack/
 *.log
 npm-debug.log*
 
+# Frontend test coverage
+frontend/coverage/
+
 # Runtime outputs (regenerated locally)
 data/uploads/
 data/reports/
 data/*.db
 data/*.sqlite3
+data/models/
 *.db
 *.sqlite3
 
@@ -47,3 +51,5 @@ Thumbs.db
 
 # Lovable / local agent noise
 frontend/.lovable/
+
+# NOTE: artifacts/ is intentionally tracked — it contains project documentation

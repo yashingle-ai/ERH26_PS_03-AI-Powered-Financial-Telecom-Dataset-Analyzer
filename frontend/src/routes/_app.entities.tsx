@@ -1,9 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/case-topbar";
 import { Input } from "@/components/ui/input";
-import type { Entity } from "@/lib/mock-data";
+import type { Entity } from "@/lib/types";
 import { RiskBadge, RiskGauge } from "@/components/risk-badge";
-import { Search, User, Building2, Phone as PhoneIcon, CreditCard, Loader2 } from "lucide-react";
+import { Search, User, Building2, Phone as PhoneIcon, CreditCard, ArrowUpDown, Clock, Share2, FileText, Pin, Check } from "lucide-react";
+import { LoadingState } from "@/components/shared/loading-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { EntitySkeleton } from "@/components/shared/skeletons";
 import { useEffect, useMemo, useState } from "react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -12,10 +15,15 @@ import { Button } from "@/components/ui/button";
 import { useEntities } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
 import { mapEntity } from "@/lib/mappers";
+import { riskColor, formatLakhs } from "@/lib/constants";
 
 export const Route = createFileRoute("/_app/entities")({
   head: () => ({ meta: [{ title: "Entity explorer — ERakshak" }] }),
   component: EntitiesPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: (search.id as string) || undefined,
+    rule: (search.rule as string) || undefined,
+  }),
 });
 
 function KindIcon({ kind }: { kind: Entity["kind"] }) {
@@ -26,37 +34,83 @@ function KindIcon({ kind }: { kind: Entity["kind"] }) {
   return <CreditCard className={cls} />;
 }
 
+type SortKey = "risk" | "events" | "volume" | "label";
+type SortDir = "asc" | "desc";
+
 function EntitiesPage() {
-  const { dataset } = useInvestigation();
+  const { dataset, setPinnedEntity, toggleEvidence, pinnedEvidence, addBreadcrumb } = useInvestigation();
+  const { id: selectedIdFromUrl, rule: ruleFilter } = Route.useSearch();
+  const navigate = Route.useNavigate();
+
   const { data, isLoading, error } = useEntities();
   const entities = useMemo(() => (data?.items || []).map(mapEntity), [data]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Entity | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("risk");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  /* Select entity from URL param on first load */
   useEffect(() => {
-    if (entities.length && (!selected || !entities.find((e) => e.id === selected.id))) {
+    if (selectedIdFromUrl && entities.length) {
+      const found = entities.find((e) => e.id === selectedIdFromUrl);
+      if (found) {
+        setSelected(found);
+        setPinnedEntity(found);
+        addBreadcrumb({ id: found.id, label: found.label, page: "entities" });
+      }
+    }
+  }, [selectedIdFromUrl, entities, setPinnedEntity, addBreadcrumb]);
+
+  /* Auto-select first entity */
+  useEffect(() => {
+    if (entities.length && !selected && !selectedIdFromUrl) {
       setSelected(entities[0]);
     }
-  }, [entities, selected]);
+  }, [entities, selected, selectedIdFromUrl]);
 
-  const list = entities.filter((e) =>
-    (e.label + e.identifiers.map((i) => i.value).join(" ")).toLowerCase().includes(q.toLowerCase())
-  );
+  /* Sorting */
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("desc"); }
+  };
+
+  const sortIndicator = (key: SortKey) =>
+    sortKey === key ? (sortDir === "desc" ? " ↓" : " ↑") : "";
+
+  /* Filter & sort list */
+  const list = useMemo(() => {
+    let filtered = entities;
+
+    // Text search
+    if (q) {
+      const lower = q.toLowerCase();
+      filtered = filtered.filter((e) =>
+        (e.label + e.identifiers.map((i) => i.value).join(" ")).toLowerCase().includes(lower)
+      );
+    }
+
+    // Rule filter
+    if (ruleFilter) {
+      filtered = filtered.filter((e) => e.flags.includes(ruleFilter));
+    }
+
+    // Sort
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "risk") cmp = a.risk - b.risk;
+      else if (sortKey === "events") cmp = a.events - b.events;
+      else if (sortKey === "volume") cmp = a.volume - b.volume;
+      else cmp = a.label.localeCompare(b.label);
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+  }, [entities, q, ruleFilter, sortKey, sortDir]);
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" /> Loading entities…
-      </div>
-    );
+    return <EntitySkeleton />;
   }
 
   if (error) {
-    return (
-      <div className="rounded-lg border border-[color:var(--risk-high)]/40 bg-[color:var(--risk-high)]/10 p-4 text-sm text-[color:var(--risk-high)]">
-        {(error as Error).message}
-      </div>
-    );
+    return <ErrorState message={(error as Error).message} />;
   }
 
   return (
@@ -64,7 +118,19 @@ function EntitiesPage() {
       <PageHeader
         eyebrow={`Case · ${(dataset || "").toUpperCase()}`}
         title="Entity explorer"
-        description={`${data?.total ?? 0} scored entities from the fusion pipeline.`}
+        description={`${data?.total ?? 0} scored entities from the fusion pipeline.${ruleFilter ? ` Filtered by rule: ${ruleFilter.replace(/_/g, " ")}` : ""}`}
+        actions={
+          ruleFilter ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate({ search: (prev: any) => ({ ...prev, id: undefined, rule: undefined }) })}
+              className="text-mono gap-1.5 text-[11px] uppercase tracking-widest"
+            >
+              Clear filter
+            </Button>
+          ) : undefined
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
@@ -83,17 +149,36 @@ function EntitiesPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-mono text-[10px] uppercase tracking-widest">Entity</TableHead>
+                <TableHead
+                  onClick={() => toggleSort("label")}
+                  className="text-mono cursor-pointer select-none text-[10px] uppercase tracking-widest hover:text-foreground"
+                >
+                  Entity{sortIndicator("label")}
+                </TableHead>
                 <TableHead className="text-mono text-[10px] uppercase tracking-widest">Primary identifier</TableHead>
-                <TableHead className="text-mono text-right text-[10px] uppercase tracking-widest">Txns</TableHead>
-                <TableHead className="text-mono text-[10px] uppercase tracking-widest">Risk</TableHead>
+                <TableHead
+                  onClick={() => toggleSort("events")}
+                  className="text-mono cursor-pointer select-none text-right text-[10px] uppercase tracking-widest hover:text-foreground"
+                >
+                  Txns{sortIndicator("events")}
+                </TableHead>
+                <TableHead
+                  onClick={() => toggleSort("risk")}
+                  className="text-mono cursor-pointer select-none text-[10px] uppercase tracking-widest hover:text-foreground"
+                >
+                  Risk{sortIndicator("risk")}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {list.map((e) => (
                 <TableRow
                   key={e.id}
-                  onClick={() => setSelected(e)}
+                  onClick={() => {
+                    setSelected(e);
+                    setPinnedEntity(e);
+                    addBreadcrumb({ id: e.id, label: e.label, page: "entities" });
+                  }}
                   data-selected={selected?.id === e.id}
                   className="cursor-pointer border-border data-[selected=true]:bg-primary/10 hover:bg-accent/40"
                 >
@@ -128,13 +213,46 @@ function EntitiesPage() {
                 </div>
                 <h2 className="mt-1 text-xl font-semibold text-foreground">{selected.label}</h2>
                 <div className="text-mono mt-1 text-[11px] text-muted-foreground">
-                  {selected.events} txns · ₹ {(selected.volume / 100000).toFixed(1)}L volume
+                  {selected.events} txns · {formatLakhs(selected.volume)} volume
                 </div>
               </div>
               <RiskGauge score={selected.risk} />
             </div>
 
-            <div className="mt-6">
+            {/* ── Risk Score Breakdown ──────────────────── */}
+            <div className="mt-5">
+              <div className="text-mono mb-2 text-[10px] uppercase tracking-widest text-muted-foreground">
+                Risk score breakdown
+              </div>
+              <div className="space-y-1.5">
+                {/* Stacked bar */}
+                <div className="flex h-3 overflow-hidden rounded-full bg-muted/30">
+                  <div
+                    className="transition-all"
+                    style={{
+                      width: `${70}%`,
+                      backgroundColor: riskColor(selected.risk),
+                      opacity: 0.7,
+                    }}
+                  />
+                  <div
+                    className="transition-all"
+                    style={{
+                      width: `${30}%`,
+                      backgroundColor: "var(--primary)",
+                      opacity: 0.4,
+                    }}
+                  />
+                </div>
+                <div className="text-mono flex justify-between text-[10px] text-muted-foreground">
+                  <span>Rule score · 70% weight</span>
+                  <span>ML anomaly · 30% ({(selected.mlScore * 100).toFixed(0)}%)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Resolved identifiers ─────────────────── */}
+            <div className="mt-5">
               <div className="text-mono mb-2 text-[10px] uppercase tracking-widest text-muted-foreground">
                 Resolved identifiers
               </div>
@@ -151,28 +269,62 @@ function EntitiesPage() {
               </div>
             </div>
 
-            <div className="mt-6">
+            {/* ── Risk Factors with details ────────────── */}
+            <div className="mt-5">
               <div className="text-mono mb-2 text-[10px] uppercase tracking-widest text-muted-foreground">
                 Risk factors
               </div>
               <div className="space-y-2">
-                {selected.flags.length === 0 && (
+                {selected.ruleFlags.length === 0 && (
                   <div className="text-sm text-muted-foreground">No rule flags on this entity.</div>
                 )}
-                {selected.flags.map((f) => (
-                  <div key={f} className="flex items-center gap-3">
-                    <div className="h-1.5 w-1.5 rounded-full bg-[color:var(--risk-high)]" />
-                    <div className="flex-1 text-[12px] text-foreground">{f.replace(/_/g, " ")}</div>
+                {selected.ruleFlags.map((f) => (
+                  <div key={f.rule} className="rounded border border-border/60 bg-background/30 px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-1.5 rounded-full bg-[color:var(--risk-high)]" />
+                        <span className="text-[12px] font-medium text-foreground">{f.rule.replace(/_/g, " ")}</span>
+                      </div>
+                      <span className="text-mono text-[10px] text-muted-foreground">
+                        +{Math.round(f.weight * 100)}
+                      </span>
+                    </div>
+                    {f.detail && (
+                      <div className="mt-1 pl-4 text-[11px] text-muted-foreground">{f.detail}</div>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* ── Action buttons with navigation ──────── */}
             <div className="mt-6 flex gap-2">
-              <Button size="sm" variant="outline">Open timeline</Button>
-              <Button size="sm" variant="outline">Show on graph</Button>
-              <Button size="sm" className="ml-auto bg-primary text-primary-foreground hover:opacity-90">
-                Add to report
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => navigate({ to: "/timeline", search: { entity: selected.id } as any })}
+              >
+                <Clock className="h-3 w-3" /> Timeline
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => navigate({ to: "/network", search: { node: selected.id } as any })}
+              >
+                <Share2 className="h-3 w-3" /> Graph
+              </Button>
+              <Button
+                size="sm"
+                className={`ml-auto gap-1.5 ${pinnedEvidence.includes(selected.id) ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-primary text-primary-foreground hover:opacity-90'}`}
+                onClick={() => toggleEvidence(selected.id)}
+              >
+                {pinnedEvidence.includes(selected.id) ? (
+                  <><Check className="h-3 w-3" /> In report</>
+                ) : (
+                  <><Pin className="h-3 w-3" /> Add to report</>
+                )}
               </Button>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { riskBand } from "@/lib/mock-data";
+import { riskBand } from "@/lib/constants";
 
 export function RiskBadge({ score, className }: { score: number; className?: string }) {
   const band = riskBand(score);

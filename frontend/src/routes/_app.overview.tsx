@@ -5,7 +5,10 @@ import { RiskBadge } from "@/components/risk-badge";
 import {
   Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart, CartesianGrid,
 } from "recharts";
-import { ArrowUpRight, Clock, Share2, FileText, TrendingUp, PhoneCall, Globe, ArrowRightLeft, Loader2 } from "lucide-react";
+import { ArrowUpRight, Clock, Share2, FileText, TrendingUp, PhoneCall, Globe, ArrowRightLeft } from "lucide-react";
+import { LoadingState } from "@/components/shared/loading-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { OverviewSkeleton } from "@/components/shared/skeletons";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -21,7 +24,7 @@ export const Route = createFileRoute("/_app/overview")({
 function KPI({ label, value, sub, tone = "default" }: { label: string; value: string; sub?: string; tone?: "default" | "risk" | "primary" }) {
   const color = tone === "risk" ? "text-[color:var(--risk-high)]" : tone === "primary" ? "text-primary" : "text-foreground";
   return (
-    <div className="rounded-lg border border-border bg-surface/60 p-4">
+    <div className="hover-lift rounded-lg border border-border bg-surface/60 p-4">
       <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
       <div className={`text-mono mt-2 text-2xl font-semibold ${color}`}>{value}</div>
       {sub && <div className="mt-1 text-[11px] text-muted-foreground">{sub}</div>}
@@ -34,19 +37,11 @@ function OverviewPage() {
   const { data, isLoading, error } = useAnalyze();
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" /> Running pipeline on {dataset}…
-      </div>
-    );
+    return <OverviewSkeleton />;
   }
 
   if (error || !data) {
-    return (
-      <div className="rounded-lg border border-[color:var(--risk-high)]/40 bg-[color:var(--risk-high)]/10 p-4 text-sm text-[color:var(--risk-high)]">
-        {(error as Error)?.message || "No analysis data"}
-      </div>
-    );
+    return <ErrorState message={(error as Error)?.message || "No analysis data"} />;
   }
 
   const c = mapCaseFromAnalyze(dataset || data.dataset, data);
@@ -66,7 +61,7 @@ function OverviewPage() {
         actions={
           <>
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link to="/timeline"><Clock className="h-3.5 w-3.5" /> Timeline</Link>
+              <Link to="/timeline" search={{ entity: undefined }}><Clock className="h-3.5 w-3.5" /> Timeline</Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
               <Link to="/network"><Share2 className="h-3.5 w-3.5" /> Network</Link>
@@ -145,7 +140,7 @@ function OverviewPage() {
               <div className="mt-0.5 text-sm text-foreground">Ranked by composite risk score</div>
             </div>
             <Button asChild size="sm" variant="ghost" className="text-mono text-[11px] uppercase tracking-widest text-primary">
-              <Link to="/entities">All entities <ArrowUpRight className="ml-1 h-3 w-3" /></Link>
+              <Link to="/entities" search={{ id: undefined, rule: undefined }}>All entities <ArrowUpRight className="ml-1 h-3 w-3" /></Link>
             </Button>
           </div>
           <Table>
@@ -162,7 +157,7 @@ function OverviewPage() {
               {top.map((e) => (
                 <TableRow key={e.id} className="border-border hover:bg-accent/40">
                   <TableCell>
-                    <Link to="/entities" className="block">
+                    <Link to="/entities" search={{ id: e.id, rule: undefined }} className="block">
                       <div className="text-sm text-foreground">{e.label}</div>
                       <div className="text-mono mt-0.5 text-[10px] text-muted-foreground">
                         {e.identifiers[0]?.value || e.id}

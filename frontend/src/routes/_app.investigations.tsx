@@ -36,6 +36,8 @@ function statusChip(status: string) {
 
 function InvestigationsPage() {
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [riskFilter, setRiskFilter] = useState<string | null>(null);
   const { setDataset, windowMinutes } = useInvestigation();
   const { data: dsData, isLoading: loadingList, error: listError } = useDatasets();
   const datasets = dsData?.datasets || [];
@@ -71,9 +73,16 @@ function InvestigationsPage() {
     });
   }, [datasets, analyses]);
 
-  const list = cases.filter((c) =>
-    (c.title + c.code).toLowerCase().includes(q.toLowerCase())
-  );
+  const list = cases.filter((c) => {
+    const matchesQ = (c.title + c.code).toLowerCase().includes(q.toLowerCase());
+    const matchesStatus = statusFilter === "all" || c.status.toLowerCase() === statusFilter.toLowerCase();
+    const matchesRisk = !riskFilter || (
+      riskFilter === "high" ? c.topRisk >= 70 :
+      riskFilter === "med" ? (c.topRisk >= 40 && c.topRisk < 70) :
+      c.topRisk > 0 && c.topRisk < 40
+    );
+    return matchesQ && matchesStatus && matchesRisk;
+  });
 
   const highRisk = analyses.reduce((n, a) => n + (a.data?.summary.high_risk_entities || 0), 0);
   const totalEvents = analyses.reduce((n, a) => n + (a.data?.summary.events || 0), 0);
@@ -130,18 +139,29 @@ function InvestigationsPage() {
             className="h-9 border-border bg-surface pl-8 text-mono text-[13px]"
           />
         </div>
-        {["All", "Ready", "Analyzing", "Ingested"].map((s, i) => (
-          <Button key={s} variant={i === 0 ? "secondary" : "ghost"} size="sm" className="text-mono h-9 text-[11px] uppercase tracking-widest">
+        {["All", "Ready", "Analyzing", "Ingested"].map((s) => (
+          <Button
+            key={s}
+            variant={statusFilter === s.toLowerCase() || (s === "All" && statusFilter === "all") ? "secondary" : "ghost"}
+            size="sm"
+            className="text-mono h-9 text-[11px] uppercase tracking-widest"
+            onClick={() => setStatusFilter(s.toLowerCase() === "all" ? "all" : s.toLowerCase())}
+          >
             {s}
           </Button>
         ))}
         <div className="ml-2 flex items-center gap-1">
           {[
-            { label: "Low", c: "var(--risk-low)" },
-            { label: "Med", c: "var(--risk-med)" },
-            { label: "High", c: "var(--risk-high)" },
+            { label: "Low", c: "var(--risk-low)", k: "low" },
+            { label: "Med", c: "var(--risk-med)", k: "med" },
+            { label: "High", c: "var(--risk-high)", k: "high" },
           ].map((b) => (
-            <Badge key={b.label} variant="outline" className="text-mono h-7 rounded border-border bg-transparent text-[10px] uppercase tracking-widest">
+            <Badge
+              key={b.label}
+              variant="outline"
+              className={`text-mono h-7 cursor-pointer rounded border-border text-[10px] uppercase tracking-widest transition-colors ${riskFilter === b.k ? 'bg-primary/10 border-primary/40' : 'bg-transparent hover:bg-accent/30'}`}
+              onClick={() => setRiskFilter(riskFilter === b.k ? null : b.k)}
+            >
               <span className="mr-1.5 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: b.c }} />
               {b.label}
             </Badge>

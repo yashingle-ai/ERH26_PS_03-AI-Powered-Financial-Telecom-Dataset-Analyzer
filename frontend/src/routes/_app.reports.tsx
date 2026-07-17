@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/case-topbar";
 import { Button } from "@/components/ui/button";
-import { Download, FileWarning, Loader2 } from "lucide-react";
+import { Download, FileWarning } from "lucide-react";
+import { LoadingState } from "@/components/shared/loading-state";
+import { ErrorState } from "@/components/shared/error-state";
 import { toast } from "sonner";
 import { useAnalyze } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
@@ -17,19 +19,11 @@ function ReportsPage() {
   const { data, isLoading, error } = useAnalyze();
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" /> Preparing report preview…
-      </div>
-    );
+    return <LoadingState message="Preparing report preview…" />;
   }
 
   if (error || !data) {
-    return (
-      <div className="rounded-lg border border-[color:var(--risk-high)]/40 bg-[color:var(--risk-high)]/10 p-4 text-sm text-[color:var(--risk-high)]">
-        {(error as Error)?.message || "No analysis data"}
-      </div>
-    );
+    return <ErrorState message={(error as Error)?.message || "No analysis data"} />;
   }
 
   const c = mapCaseFromAnalyze(dataset || data.dataset, data);
@@ -44,10 +38,10 @@ function ReportsPage() {
         description="Preview from live analyze results. PDF/STR export endpoints are not exposed on the API yet."
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => toast.message("STR export not wired to API yet")}>
-              <FileWarning className="h-3.5 w-3.5" /> Export STR (.docx)
+            <Button variant="outline" size="sm" className="gap-2 opacity-50 cursor-not-allowed" disabled title="STR export endpoint not yet available in the API">
+              <FileWarning className="h-3.5 w-3.5" /> Export STR · Coming Soon
             </Button>
-            <Button size="sm" className="gap-2 bg-primary text-primary-foreground hover:opacity-90" onClick={() => toast.message("PDF export not wired to API yet")}>
+            <Button size="sm" className="gap-2 bg-primary text-primary-foreground hover:opacity-90" onClick={() => window.print()}>
               <Download className="h-3.5 w-3.5" /> Export Forensic Report (PDF)
             </Button>
           </>
@@ -55,7 +49,7 @@ function ReportsPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <div className="rounded-lg border border-border bg-[oklch(0.94_0.01_240)] p-8 text-[oklch(0.18_0.02_250)] shadow-2xl">
+        <div className="print-container rounded-lg border border-border bg-[oklch(0.94_0.01_240)] p-8 text-[oklch(0.18_0.02_250)] shadow-2xl">
           <div className="mb-6 flex items-start justify-between border-b border-[oklch(0.85_0.01_240)] pb-4">
             <div>
               <div className="text-mono text-[9px] uppercase tracking-[0.3em] text-[oklch(0.45_0.02_250)]">
@@ -123,7 +117,7 @@ function ReportsPage() {
           </section>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 no-print">
           <div className="rounded-lg border border-border bg-surface/40 p-4 text-sm text-muted-foreground">
             Summary: {data.summary.entities} entities · {data.summary.correlation_hits} hits ·{" "}
             {data.summary.high_risk_entities} high-risk.
