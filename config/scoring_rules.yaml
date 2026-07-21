@@ -24,12 +24,14 @@ rules:
     # Funds hop across >= N accounts within a short span
     min_hops: 3
     max_span_hours: 48
+    min_amount_inr: 10000        # D1: ignore tiny INR hops (noise); crypto edges always kept
     weight: 0.15
 
   circular_flow:
     enabled: true
     # A -> B -> ... -> A money loop detected in the graph
     max_cycle_length: 6
+    min_amount_inr: 10000        # D1: ignore tiny INR loops (noise); crypto edges always kept
     weight: 0.15
 
   mule_account:
@@ -45,6 +47,18 @@ rules:
     # The signature fusion pattern: call + online(IP) + transfer within window
     window_minutes: 10                      # mirrors correlation.default_window_minutes
     weight: 0.15
+
+  comm_burst:
+    enabled: true
+    # Unusually many calls in a short window (coordination / spam-dial signature)
+    max_calls_per_hour: 30
+    weight: 0.10
+
+  dormant_activation:
+    enabled: true
+    # Account inactive for a long time, then suddenly transacting again
+    min_dormancy_days: 90
+    weight: 0.10
 
 # Composite risk score (0-100). ML anomaly score blended with rule hits.
 risk_score:

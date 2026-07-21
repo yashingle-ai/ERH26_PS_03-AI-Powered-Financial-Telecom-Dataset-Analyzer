@@ -1,0 +1,39 @@
+# Real LEA / "Ticket Number" CDR export (values are quoted, e.g. '919099102222').
+profile:
+  id: cdr_lea
+  source: CDR
+  event_type: CALL
+  match:
+    required_any: ["Calling Party Telephone Number", "Called Party Telephone Number"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["Calling Party Telephone Number"]
+    type: phone
+  counterparty_phone:
+    aliases: ["Called Party Telephone Number"]
+    type: phone
+  direction:
+    aliases: ["Call Type"]
+    type: string
+  date_col:
+    aliases: ["Call Date"]
+    type: date
+  time_col:
+    aliases: ["Call Time"]
+    type: time
+  attributes.duration:
+    aliases: ["Call Duration"]
+    type: int
+  imei:
+    aliases: ["IMEI"]
+    type: string
+  imsi:
+    aliases: ["IMSI"]
+    type: string
+  attributes.cell_id:
+    aliases: ["First Cell ID"]
+    type: string
+  attributes.circle:
+    aliases: ["Roaming Circle Name"]
+    type: string
