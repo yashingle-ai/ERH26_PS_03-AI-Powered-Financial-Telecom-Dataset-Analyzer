@@ -20,8 +20,8 @@ Design constraints (research/07, SR-R4):
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from datetime import datetime
+from collections import defaultdict
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -225,13 +225,19 @@ def execute(spec: QuerySpec, inv) -> dict:
 
     if spec.target is Target.EVENTS:
         pool = inv.events
-        getter = lambda r, f: _event_value(r, f, entities)  # noqa: E731
+
+        def getter(row: dict, f: Field_):
+            return _event_value(row, f, entities)
     elif spec.target is Target.ENTITIES:
         pool = list(inv.risk.values())
-        getter = lambda r, f: _entity_value(r, f, entities)  # noqa: E731
+
+        def getter(row: dict, f: Field_):
+            return _entity_value(row, f, entities)
     else:
         pool = inv.correlation_hits
-        getter = lambda r, f: r.get(f.value)  # noqa: E731
+
+        def getter(row: dict, f: Field_):
+            return row.get(f.value)
 
     rows = [r for r in pool if all(_matches(getter(r, f.field), f) for f in spec.filters)]
 
@@ -240,8 +246,10 @@ def execute(spec: QuerySpec, inv) -> dict:
 
     total = len(rows)
     if spec.target is Target.EVENTS:
-        rows.sort(key=lambda e: e.get("timestamp_start") or datetime.min.replace(
-            tzinfo=__import__("datetime").timezone.utc), reverse=spec.order_desc)
+        # Event timestamps are timezone-aware, so the fallback must be too — sorting an
+        # aware datetime against a naive one raises TypeError.
+        rows.sort(key=lambda e: e.get("timestamp_start") or datetime.min.replace(tzinfo=UTC),
+                  reverse=spec.order_desc)
         shaped = [_shape_event(e, entities) for e in rows[: spec.limit]]
     elif spec.target is Target.ENTITIES:
         rows.sort(key=lambda r: r.get("risk_score") or 0, reverse=spec.order_desc)
@@ -314,5 +322,5 @@ def schema_vocabulary() -> dict:
     }
 
 
-__all__ = ["QuerySpec", "Filter", "Target", "Op", "Field_", "Aggregate",
-           "execute", "schema_vocabulary", "Counter"]
+__all__ = ["Aggregate", "Field_", "Filter", "Op", "QuerySpec", "Target",
+           "execute", "schema_vocabulary"]

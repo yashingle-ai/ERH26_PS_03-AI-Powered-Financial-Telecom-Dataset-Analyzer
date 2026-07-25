@@ -191,9 +191,23 @@ def test_planner_returns_none_without_api_key(monkeypatch):
     assert llm_planner.plan("who did X call most often?") is None
 
 
-def test_schema_vocabulary_contains_no_case_data():
-    """What we send is field names only — assert it stays that way."""
+def test_schema_vocabulary_is_static_and_data_free(inv):
+    """The outbound vocabulary must depend only on the schema, never on the loaded case.
+
+    Asserted structurally: every value is drawn from the DSL's own enums, and none of the
+    fixture's identifiers (phones, accounts, entity labels) can appear in it.
+    """
     vocab = dsl.schema_vocabulary()
     flat = str(vocab)
-    assert "targets" in vocab and "fields" in vocab
-    assert not any(ch.isdigit() and len(w) > 6 for w in flat.split() for ch in w)
+
+    known = (
+        {t.value for t in Target} | {f.value for f in Field_}
+        | {o.value for o in Op} | {a.value for a in Aggregate}
+        | {"TRANSACTION", "CALL", "IP_SESSION", "low", "medium", "high",
+           "DEBIT", "CREDIT", "IN", "OUT"}
+    )
+    emitted = {v for values in vocab.values() for v in values}
+    assert emitted <= known, f"vocabulary leaked non-schema values: {emitted - known}"
+
+    for secret in ("+911", "+912", "999", "Subject A", "IMEI-A"):
+        assert secret not in flat

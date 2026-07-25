@@ -188,54 +188,62 @@ def _records_from_grid(grid: list[list], header_idx: int, base_prov: dict,
 
 
 def parse_file(path: str) -> ParsedFile:
+    """Parse a file into a single ParsedFile (the best grid, for grid formats).
+
+    Use `parse_file_multi` when a source can hold several independent tables.
+    """
     fmt = detector.detect_format(path)
-    text_lines: list[str] = []
 
-    if fmt == "csv":
-        # Real exports carry a metadata preamble before the real table — locate the header.
-        preview = tabular.read_lines(path, config.max_preamble_rows())
-        header_row = _find_csv_header_row(preview)
-        df = tabular.read(path, skiprows=header_row)
-        # pandas already disambiguates repeated CSV columns ("Name.1"), but stripping
-        # whitespace here can collide them again — and a duplicate label makes row[c]
-        # return a Series instead of a value, which breaks every downstream consumer.
-        headers = _dedupe_headers([str(c).strip() for c in df.columns])
-        df.columns = headers
-        cap = config.max_rows_per_file()
-        if len(df) > cap:                      # G1: cap + log (no silent truncation)
-            log.warning("truncating %s: %d rows > cap %d", Path(path).name, len(df), cap)
-            df = df.iloc[:cap]
-        det = detector.detect_profile(headers)
-        records = []
-        for i, (_idx, row) in enumerate(df.iterrows()):
-            rec = {c: row[c] for c in headers}
-            rec["_provenance"] = {"source_file": Path(path).name,
-                                  "row": i + header_row + 2, "format": fmt}
-            records.append(rec)
-        identity = _extract_identity([], [])
-        # bank CSVs carry identity inline; capture from first row if present
-        if records:
-            for key, col in (("account_no", "Account Number"),
-                             ("account_holder", "Account Name"),
-                             ("registered_mobile", "Customer Mobile"),
-                             ("registered_mobile", "Registered Mobile"),
-                             ("registered_mobile", "Mobile")):
-                if col in records[0] and records[0][col]:
-                    identity[key] = records[0][col]
-        rejects = []
-
-    else:  # xlsx / pdf / docx -> grid
+    if fmt != "csv":
         if fmt == "xlsx":
             # B2: read all sheets, keep the one whose detected profile scores best
             # (falls back to the largest sheet) — avoids losing data on non-first sheets.
             sheets = excel.read_all_sheets(path)
-            grid = _best_sheet(sheets) if sheets else [[]]
+            grid, text_lines = (_best_sheet(sheets) if sheets else [[]]), []
         elif fmt == "docx":
-            grid = docx_tables.read_grid(path) or [[]]
+            grid, text_lines = docx_tables.read_grid(path) or [[]], []
         else:
             text_lines, grid = pdf.read(path)
         return _parsed_from_grid(path, fmt, grid, text_lines)
 
+    return _parse_csv(path, fmt)
+
+
+def _parse_csv(path: str, fmt: str) -> ParsedFile:
+    """Delimited text. Unlike the grid formats, rows come straight from pandas."""
+    # Real exports carry a metadata preamble before the real table — locate the header.
+    preview = tabular.read_lines(path, config.max_preamble_rows())
+    header_row = _find_csv_header_row(preview)
+    df = tabular.read(path, skiprows=header_row)
+    # pandas already disambiguates repeated CSV columns ("Name.1"), but stripping
+    # whitespace here can collide them again — and a duplicate label makes row[c]
+    # return a Series instead of a value, which breaks every downstream consumer.
+    headers = _dedupe_headers([str(c).strip() for c in df.columns])
+    df.columns = headers
+    cap = config.max_rows_per_file()
+    if len(df) > cap:                      # G1: cap + log (no silent truncation)
+        log.warning("truncating %s: %d rows > cap %d", Path(path).name, len(df), cap)
+        df = df.iloc[:cap]
+
+    records = []
+    for i, (_idx, row) in enumerate(df.iterrows()):
+        rec = {c: row[c] for c in headers}
+        rec["_provenance"] = {"source_file": Path(path).name,
+                              "row": i + header_row + 2, "format": fmt}
+        records.append(rec)
+
+    identity = _extract_identity([], [])
+    # bank CSVs carry identity inline; capture from first row if present
+    if records:
+        for key, col in (("account_no", "Account Number"),
+                         ("account_holder", "Account Name"),
+                         ("registered_mobile", "Customer Mobile"),
+                         ("registered_mobile", "Registered Mobile"),
+                         ("registered_mobile", "Mobile")):
+            if col in records[0] and records[0][col]:
+                identity[key] = records[0][col]
+
+    det = detector.detect_profile(headers)
     profile = det.get("profile") or {}
     return ParsedFile(
         path=path, format=fmt,
@@ -243,7 +251,7 @@ def parse_file(path: str) -> ParsedFile:
         profile_id=profile.get("profile", {}).get("id"),
         confidence=det.get("confidence", 0.0),
         needs_manual_mapping=det.get("needs_manual_mapping", True),
-        headers=headers, records=records, header_identity=identity, rejects=rejects,
+        headers=headers, records=records, header_identity=identity, rejects=[],
     )
 
 
