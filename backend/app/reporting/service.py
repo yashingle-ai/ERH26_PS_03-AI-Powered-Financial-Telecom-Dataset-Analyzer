@@ -28,6 +28,56 @@ def _top_transfers(data, n=15):
     return sorted(data["transfers"], key=lambda t: -(t.get("amount") or 0))[:n]
 
 
+def _build_charts(data, out_dir) -> list[tuple[str, str]]:
+    """E2: render charts (risk bars, activity timeline) as PNGs for the report."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    charts = []
+    stamp = _stamp()
+
+    # 1. Top risk entities bar
+    top = [r for r in _top_entities(data, 10) if r["risk_score"] > 0]
+    if top:
+        fig, ax = plt.subplots(figsize=(7, 3.2))
+        labels = [str(r["label"])[:18] for r in top][::-1]
+        vals = [r["risk_score"] for r in top][::-1]
+        ax.barh(labels, vals, color="#c0392b")
+        ax.set_xlabel("Risk score")
+        ax.set_title("Top risk entities")
+        fig.tight_layout()
+        p = os.path.join(out_dir, f"chart_risk_{stamp}.png")
+        fig.savefig(p, dpi=120)
+        plt.close(fig)
+        charts.append(("Top risk entities", p))
+
+    # 2. Activity-over-time timeline (events per day by type)
+    from collections import defaultdict
+    by_day = defaultdict(lambda: defaultdict(int))
+    for e in data.get("events", []):
+        ts = e.get("timestamp_start")
+        if ts:
+            by_day[str(ts)[:10]][e["event_type"]] += 1
+    if by_day:
+        days = sorted(by_day)[:120]
+        fig, ax = plt.subplots(figsize=(7, 3.0))
+        for et, color in (("TRANSACTION", "#d62728"), ("CALL", "#1f77b4"),
+                          ("IP_SESSION", "#2ca02c")):
+            ax.plot(days, [by_day[d].get(et, 0) for d in days], label=et, color=color)
+        ax.set_title("Activity over time")
+        ax.legend(fontsize=7)
+        ax.set_xticks(days[:: max(1, len(days) // 8)])
+        ax.tick_params(axis="x", labelrotation=45, labelsize=6)
+        fig.tight_layout()
+        p = os.path.join(out_dir, f"chart_timeline_{stamp}.png")
+        fig.savefig(p, dpi=120)
+        plt.close(fig)
+        charts.append(("Activity over time", p))
+
+    return charts
+
+
 def generate(data: dict, out_dir: str, fmt: str = "pdf") -> str:
     os.makedirs(out_dir, exist_ok=True)
     if fmt == "docx":
@@ -41,7 +91,7 @@ def _generate_pdf(data, out_dir) -> str:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     path = os.path.join(out_dir, f"forensic_report_{_stamp()}.pdf")
     doc = SimpleDocTemplate(path, pagesize=A4, topMargin=15 * mm, bottomMargin=15 * mm)
@@ -64,9 +114,15 @@ def _generate_pdf(data, out_dir) -> str:
             ["Resolved entities", S["entities"]],
             ["Correlation coincidences", S["correlation_hits"]],
             ["High-risk entities", S["high_risk_entities"]],
-            ["Rejected rows", S["rejects"]]]
+            ["Rejected rows", S["rejected_rows"]]]
     story.append(_pdf_table(summ, Table, TableStyle, colors, header=False))
     story.append(Spacer(1, 10))
+
+    # E2: charts
+    for title, img in _build_charts(data, out_dir):
+        story.append(Paragraph(title, styles["Heading3"]))
+        story.append(Image(img, width=170 * mm, height=70 * mm))
+        story.append(Spacer(1, 8))
 
     story.append(Paragraph("2. Top Risk Entities", styles["Heading2"]))
     rows = [["Entity", "Risk", "Band", "Reasons"]]
@@ -138,8 +194,14 @@ def _generate_docx(data, out_dir) -> str:
     for k, v in [("Files", S["files"]), ("Events", S["events"]),
                  ("Transactions/Calls/IP", f"{S['transactions']}/{S['calls']}/{S['ip_sessions']}"),
                  ("Entities", S["entities"]), ("Correlation hits", S["correlation_hits"]),
-                 ("High-risk entities", S["high_risk_entities"]), ("Rejected rows", S["rejects"])]:
+                 ("High-risk entities", S["high_risk_entities"]), ("Rejected rows", S["rejected_rows"])]:
         doc.add_paragraph(f"{k}: {v}", style="List Bullet")
+
+    # E2: charts
+    from docx.shared import Inches
+    for title, img in _build_charts(data, out_dir):
+        doc.add_heading(title, 3)
+        doc.add_picture(img, width=Inches(6.2))
 
     doc.add_heading("2. Top Risk Entities", 1)
     tbl = doc.add_table(rows=1, cols=4)
@@ -186,9 +248,17 @@ def _label(data, eid):
 
 
 def _str_lines(data) -> list[str]:
+    """F2: FIU-IND-style STR narrative lines (one suspected subject per entry)."""
     lines = []
-    for r in _top_entities(data, 8):
+    n = 0
+    for r in _top_entities(data, 10):
         if r["band"] in ("high", "medium") and r["rule_flags"]:
-            reasons = "; ".join(f["detail"] for f in r["rule_flags"][:4])
-            lines.append(f"Entity {r['label']} (risk {r['risk_score']}, {r['band']}): {reasons}")
-    return lines or ["No suspicious entities above threshold."]
+            n += 1
+            reasons = "; ".join(f["rule"].replace("_", " ") for f in r["rule_flags"][:5])
+            details = "; ".join(f["detail"] for f in r["rule_flags"][:3])
+            lines.append(
+                f"STR-{n:03d} | Suspected subject: {r['label']} | Risk {r['risk_score']} "
+                f"({r['band']}) | Grounds of suspicion: {reasons} | Basis: {details} | "
+                f"Recommended action: file STR with FIU-IND; freeze/monitor per SOP."
+            )
+    return lines or ["No suspicious entities above threshold; no STR recommended."]

@@ -23,7 +23,8 @@ MODEL_VERSION = "isoforest-1.0"
 
 _ML_FEATURES = ["txn_count", "total_in", "total_out", "fan_in", "fan_out",
                 "n_ips", "n_imeis", "night_ratio", "inout_ratio",
-                "max_rapid_forward", "coincidence_count"]
+                "max_rapid_forward", "coincidence_count",
+                "max_calls_hour", "max_dormancy_days"]
 
 
 def _ml_scores(feats: dict) -> dict[str, float]:

@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Search, ChevronDown, Bell, LogOut, User, KeyRound } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useDatasets } from "@/hooks/use-investigation-data";
@@ -90,6 +91,7 @@ export function CaseTopbar() {
       </button>
 
       <div className="ml-auto flex items-center gap-1">
+        <ThemeToggle />
         <Button
           variant="ghost"
           size="icon"

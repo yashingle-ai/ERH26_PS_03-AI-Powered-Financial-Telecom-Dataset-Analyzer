@@ -1,0 +1,43 @@
+# Real merged/analyzed CDR "- Reports.xlsx" format (largest CDR source in the cases).
+# Clean header at row 0: A PARTY | B PARTY | DATE | TIME | DURATION | CALL TYPE | ...
+profile:
+  id: cdr_reports
+  source: CDR
+  event_type: CALL
+  match:
+    required_any: ["A PARTY", "B PARTY"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["A PARTY"]
+    type: phone
+  counterparty_phone:
+    aliases: ["B PARTY"]
+    type: phone
+  date_col:
+    aliases: ["DATE"]
+    type: date
+  time_col:
+    aliases: ["TIME"]
+    type: time
+  attributes.duration:
+    aliases: ["DURATION"]
+    type: int
+  direction:
+    aliases: ["CALL TYPE"]
+    type: string
+  attributes.cell_id:
+    aliases: ["FIRST CELL ID A"]
+    type: string
+  attributes.location:
+    aliases: ["FIRST CELL ID A ADDRESS"]
+    type: string
+  imei:
+    aliases: ["IMEI A"]
+    type: string
+  imsi:
+    aliases: ["IMSI A"]
+    type: string
+  attributes.circle:
+    aliases: ["ROAMING A"]
+    type: string

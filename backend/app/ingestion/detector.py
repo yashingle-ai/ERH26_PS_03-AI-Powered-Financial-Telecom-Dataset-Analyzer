@@ -14,6 +14,7 @@ from ..core import config
 
 FORMAT_BY_EXT = {
     ".xlsx": "xlsx", ".xls": "xlsx", ".csv": "csv", ".txt": "csv", ".pdf": "pdf",
+    ".docx": "docx",
 }
 
 

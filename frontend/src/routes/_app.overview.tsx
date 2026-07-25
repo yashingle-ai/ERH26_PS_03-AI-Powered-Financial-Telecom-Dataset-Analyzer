@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/case-topbar";
 import { Button } from "@/components/ui/button";
 import { RiskBadge } from "@/components/risk-badge";
 import {
-  Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart, CartesianGrid,
+  Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart, CartesianGrid, Legend,
 } from "recharts";
 import { ArrowUpRight, Clock, Share2, FileText, TrendingUp, PhoneCall, Globe, ArrowRightLeft } from "lucide-react";
 import { LoadingState } from "@/components/shared/loading-state";
@@ -94,20 +94,33 @@ function OverviewPage() {
               <AreaChart data={moneyFlowSeries}>
                 <defs>
                   <linearGradient id="fill-in" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
                   </linearGradient>
+                  {/* Series colours come from the categorical slots, never from
+                      --risk-*: an amber area would be indistinguishable from the
+                      amber that means "medium risk" everywhere else. */}
                   <linearGradient id="fill-out" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--risk-med)" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="var(--risk-med)" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--chart-5)" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="var(--chart-5)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
-                <XAxis dataKey="t" tick={{ fill: "var(--muted-foreground)", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "var(--border)" }} tickLine={false} />
-                <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "var(--border)" }} tickLine={false} />
+                <CartesianGrid stroke="var(--grid-line)" strokeDasharray="2 4" vertical={false} />
+                <XAxis dataKey="t" tick={{ fill: "var(--muted-foreground)", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "var(--axis-line)" }} tickLine={false} />
+                <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "var(--axis-line)" }} tickLine={false} />
                 <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12, fontFamily: "IBM Plex Mono" }} />
-                <Area type="monotone" dataKey="inflow" stroke="var(--primary)" strokeWidth={2} fill="url(#fill-in)" />
-                <Area type="monotone" dataKey="outflow" stroke="var(--risk-med)" strokeWidth={2} fill="url(#fill-out)" />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  height={24}
+                  iconType="plainline"
+                  iconSize={14}
+                  formatter={(value: string) => (
+                    <span className="text-mono text-[11px] text-muted-foreground">{value}</span>
+                  )}
+                />
+                <Area type="monotone" dataKey="inflow" name="Inflow" stroke="var(--chart-1)" strokeWidth={2} fill="url(#fill-in)" />
+                <Area type="monotone" dataKey="outflow" name="Outflow" stroke="var(--chart-5)" strokeWidth={2} fill="url(#fill-out)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

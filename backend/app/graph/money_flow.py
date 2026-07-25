@@ -31,6 +31,7 @@ def build_transfers(events: list[dict]) -> list[dict]:
                 transfers.append({
                     "from_entity": payer, "to_entity": payee,
                     "amount": legs["DEBIT"].get("amount"),
+                    "asset": legs["DEBIT"].get("asset") or "INR",
                     "time": legs["DEBIT"]["timestamp_start"],
                     "ref": ref,
                 })
@@ -45,6 +46,7 @@ def build_transfers(events: list[dict]) -> list[dict]:
             if payer and payee and payer != payee:
                 transfers.append({
                     "from_entity": payer, "to_entity": payee,
-                    "amount": e.get("amount"), "time": e["timestamp_start"], "ref": ref,
+                    "amount": e.get("amount"), "asset": e.get("asset") or "INR",
+                    "time": e["timestamp_start"], "ref": ref,
                 })
     return transfers

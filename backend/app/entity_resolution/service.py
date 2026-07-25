@@ -127,6 +127,9 @@ def assign_entities(events: list[dict], node_to_entity: dict, entities: dict) ->
         return eid
 
     for ev in events:
-        ev["entity_id"] = node_to_entity.get(ev["primary"])
+        primary = ev.get("primary")
+        # primary may be a non-merge identifier (e.g. IP-only IPDR) not in the graph;
+        # give it its own singleton entity so it still appears on the timeline/graph.
+        ev["entity_id"] = ext_entity(primary) if primary else None
         cp = ev.get("counterparty")
         ev["counterparty_entity_id"] = ext_entity(cp) if cp else None

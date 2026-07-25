@@ -1,15 +1,28 @@
-"""Excel reader -> 2D grid of cell values (openpyxl). Bank statements only (FR-1)."""
+"""Excel reader -> 2D grid of cell values. Handles both .xlsx (openpyxl) and legacy
+.xls (xlrd) via pandas' automatic engine selection. Bank statements / CDR / IPDR (FR-1)."""
 
 from __future__ import annotations
 
-import openpyxl
+import pandas as pd
 
 
 def read_grid(path: str) -> list[list]:
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-    ws = wb.active
-    grid = []
-    for row in ws.iter_rows(values_only=True):
-        grid.append([("" if c is None else c) for c in row])
-    wb.close()
-    return grid
+    """Read the primary sheet as a raw grid (header found downstream)."""
+    df = pd.read_excel(path, header=None, dtype=str, sheet_name=0)
+    df = df.where(pd.notna(df), "")
+    return df.values.tolist()
+
+
+def read_all_sheets(path: str) -> list[tuple[str, list[list]]]:
+    """B2: read every sheet so multi-sheet workbooks don't lose data.
+
+    Returns [(sheet_name, grid), ...]. pandas auto-selects openpyxl/.xlsx or xlrd/.xls.
+    """
+    book = pd.read_excel(path, header=None, dtype=str, sheet_name=None)
+    out = []
+    for name, df in book.items():
+        df = df.where(pd.notna(df), "")
+        grid = df.values.tolist()
+        if grid:
+            out.append((str(name), grid))
+    return out

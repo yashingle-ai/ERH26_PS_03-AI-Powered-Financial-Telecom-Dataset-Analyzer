@@ -38,8 +38,8 @@ export function GraphMinimap({ nodes, edges, selectedId, onSelectNode }: GraphMi
       style={{
         width: 120,
         height: 120,
-        backgroundColor: "oklch(0.18 0.03 250 / 0.92)",
-        border: "1px solid oklch(0.32 0.02 250)",
+        backgroundColor: "var(--overlay-bg)",
+        border: "1px solid var(--border)",
         backdropFilter: "blur(12px)",
       }}
       title="Graph Overview Minimap"

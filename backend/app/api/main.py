@@ -283,4 +283,60 @@ def graph(ds: str, window: int = 10, user=Depends(require_role("analyst"))):
     return _analyze(ds, window).graph["payload"]
 
 
+# ---- data quality (A5 balance breaks + B3 ingestion rejects) ----------------
+@v1.get("/data-quality/{ds}")
+def data_quality(ds: str, window: int = 10, user=Depends(require_role("analyst"))):
+    """Ledger-consistency breaks and per-file ingestion rejects.
+
+    Neither is fatal: rows are surfaced, never silently dropped, so the analyst can
+    see where the parsed ledger disagrees with itself before relying on it.
+    """
+    inv = _analyze(ds, window)
+    return {
+        "balance_breaks": inv.data_quality,
+        "rejects": inv.reject_report(),
+        "parsed_files": [pf.summary for pf in inv.parsed_files],
+    }
+
+
+# ---- fuzzy link suggestions (C3) — review-only, never auto-merged -----------
+@v1.get("/suggestions/{ds}")
+def link_suggestions(ds: str, window: int = 10,
+                     threshold: float = Query(0.88, ge=0.5, le=1.0),
+                     limit: int = Query(50, le=500),
+                     user=Depends(require_role("analyst"))):
+    from backend.app.entity_resolution import suggestions
+
+    inv = _analyze(ds, window)
+    rows = suggestions.suggest(inv.entities, threshold=threshold, max_pairs=limit)
+    audit("suggestions", user=user["username"], dataset=ds, count=len(rows))
+    return {"total": len(rows), "items": rows, "threshold": threshold}
+
+
+# ---- natural-language query (F1) — rule-based, offline, auditable -----------
+class QueryRequest(BaseModel):
+    q: str
+    window_minutes: int = 10
+
+
+@v1.post("/query/{ds}")
+def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst"))):
+    from backend.app.search import nl_query
+
+    inv = _analyze(ds, req.window_minutes)
+    result = nl_query.answer(req.q, {
+        "entities": inv.entities,
+        "risk": inv.risk,
+        "events": inv.events,
+        "correlation_hits": inv.correlation_hits,
+    })
+    audit("nl_query", user=user["username"], dataset=ds, q=req.q)
+    return {
+        "query": req.q,
+        "explanation": result["explanation"],
+        "rows": result.get("rows"),
+        "matched": len(result["rows"]) if result.get("rows") is not None else 0,
+    }
+
+
 app.include_router(v1)

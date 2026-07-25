@@ -30,9 +30,9 @@ export function InvestigationBar() {
       <div
         className="flex items-center gap-3 rounded-xl px-4 py-2.5 shadow-2xl backdrop-blur-xl"
         style={{
-          backgroundColor: "oklch(0.20 0.03 250 / 0.92)",
-          border: "1px solid oklch(0.36 0.03 250)",
-          boxShadow: "0 20px 50px -15px rgba(0,0,0,0.5), 0 0 0 1px oklch(0.36 0.03 250 / 0.3)",
+          backgroundColor: "var(--overlay-bg)",
+          border: "1px solid var(--overlay-border)",
+          boxShadow: "var(--overlay-shadow)",
         }}
       >
         {/* Pinned entity indicator */}
@@ -86,7 +86,7 @@ export function InvestigationBar() {
 
             <div
               className="mx-2 h-5 w-px shrink-0"
-              style={{ backgroundColor: "oklch(0.36 0.03 250)" }}
+              style={{ backgroundColor: "var(--overlay-border)" }}
             />
           </>
         )}
@@ -133,7 +133,7 @@ export function InvestigationBar() {
           <>
             <div
               className="mx-2 h-5 w-px shrink-0"
-              style={{ backgroundColor: "oklch(0.36 0.03 250)" }}
+              style={{ backgroundColor: "var(--overlay-border)" }}
             />
             <div className="text-mono text-[10px] text-muted-foreground">
               <span className="text-primary">{pinnedEvidence.length}</span> pinned

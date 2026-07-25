@@ -194,8 +194,8 @@ function TimelinePage() {
                   style={{
                     left: Math.min((hoveredEvent.minute / (24 * 60)) * 100, 80) + "%",
                     bottom: 12,
-                    backgroundColor: "oklch(0.20 0.03 250 / 0.95)",
-                    border: "1px solid oklch(0.38 0.03 250)",
+                    backgroundColor: "var(--overlay-bg)",
+                    border: "1px solid var(--overlay-border)",
                     backdropFilter: "blur(12px)",
                     maxWidth: 220,
                   }}

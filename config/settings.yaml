@@ -6,11 +6,28 @@ app:
   timezone: "Asia/Kolkata"        # default TZ when source lacks one (Doc 06)
   currency: "INR"
 
+# A4: approximate token -> INR rates so crypto flows can be ranked/compared in INR.
+# Update to current rates; unknown tokens keep raw units and value_inr = null.
+crypto_rates_inr:
+  USDT: 84.0
+  USDC: 84.0
+  TRX: 11.0
+  BTC: 5500000.0
+  ETH: 300000.0
+
 ingestion:
   # Confidence required for schema auto-detection before accepting a profile (Doc 04, DP-3)
-  auto_detect_confidence_threshold: 0.80
+  auto_detect_confidence_threshold: 0.55
   # If below threshold -> route to manual mapping instead of guessing
   on_low_confidence: "manual_mapping"
+  # Skip PDFs larger than this (real cases have huge narrative/scanned PDFs that are not
+  # structured transaction data — parsing them is slow and yields nothing usable here).
+  max_pdf_mb: 6
+  # Preamble rows to scan when locating the real header inside a messy export.
+  max_preamble_rows: 30
+  # G1: safety cap on rows parsed per file (prevents OOM on pathological inputs).
+  # Truncation is logged + reported, never silent. Raise for very large real datasets.
+  max_rows_per_file: 1000000
 
 normalization:
   phone_default_region: "IN"       # for E.164 normalization

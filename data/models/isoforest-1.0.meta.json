@@ -11,10 +11,12 @@
     "night_ratio",
     "inout_ratio",
     "max_rapid_forward",
-    "coincidence_count"
+    "coincidence_count",
+    "max_calls_hour",
+    "max_dormancy_days"
   ],
   "n_samples": 30,
-  "n_features": 11,
+  "n_features": 13,
   "contamination": 0.05,
   "random_state": 42
 }

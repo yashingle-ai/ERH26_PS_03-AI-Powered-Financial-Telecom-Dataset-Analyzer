@@ -1,0 +1,43 @@
+# Real Vodafone-Idea CDR export (FIR case data). Metadata preamble then a table
+# (a dashes row sits right under the header — ingestion skips non-data rows).
+profile:
+  id: cdr_vodafone_idea
+  source: CDR
+  event_type: CALL
+  match:
+    required_any: ["Target /A PARTY NUMBER", "A PARTY NUMBER", "Call Initiation Time"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["Target /A PARTY NUMBER", "A PARTY NUMBER", "Mobile_No"]
+    type: phone
+  counterparty_phone:
+    aliases: ["B PARTY NUMBER", "Other_Party_No"]
+    type: phone
+  direction:
+    aliases: ["CALL_TYPE", "Call_Type"]
+    type: string
+  date_col:
+    aliases: ["Call date", "Call_Date"]
+    type: date
+  time_col:
+    aliases: ["Call Initiation Time", "Call_Initiation_Time(CIT)"]
+    type: time
+  attributes.duration:
+    aliases: ["Call Duration", "Call_Duration"]
+    type: int
+  imei:
+    aliases: ["IMEI"]
+    type: string
+  imsi:
+    aliases: ["IMSI"]
+    type: string
+  attributes.cell_id:
+    aliases: ["First Cell Global Id", "First_Cell_id"]
+    type: string
+  attributes.location:
+    aliases: ["First BTS Location", "First_Cell_Desc"]
+    type: string
+  attributes.circle:
+    aliases: ["Roaming Network/Circle", "Roaming Circle"]
+    type: string

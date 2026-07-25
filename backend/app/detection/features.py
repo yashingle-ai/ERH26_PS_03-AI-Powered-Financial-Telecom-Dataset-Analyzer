@@ -11,7 +11,7 @@ def build(events: list[dict], transfers: list[dict], correlation_hits: list[dict
         "txn_count": 0, "total_in": 0.0, "total_out": 0.0,
         "credits": [], "debits": [], "counterparties_in": set(), "counterparties_out": set(),
         "distinct_ips": set(), "distinct_imeis": set(), "night_events": 0, "total_events": 0,
-        "coincidence_count": 0,
+        "coincidence_count": 0, "call_times": [], "txn_times": [],
     })
 
     for e in events:
@@ -28,15 +28,19 @@ def build(events: list[dict], transfers: list[dict], correlation_hits: list[dict
                 f["distinct_ips"].add(v)
             elif t == "IMEI":
                 f["distinct_imeis"].add(v)
+        if e["event_type"] == "CALL":
+            f["call_times"].append(e["timestamp_start"])
         if e["event_type"] == "TRANSACTION":
             f["txn_count"] += 1
+            f["txn_times"].append(e["timestamp_start"])
             amt = e.get("amount") or 0.0
+            asset = e.get("asset") or "INR"
             if e.get("direction") == "CREDIT":
                 f["total_in"] += amt
-                f["credits"].append((e["timestamp_start"], amt))
+                f["credits"].append((e["timestamp_start"], amt, asset))
             elif e.get("direction") == "DEBIT":
                 f["total_out"] += amt
-                f["debits"].append((e["timestamp_start"], amt))
+                f["debits"].append((e["timestamp_start"], amt, asset))
 
     for tr in transfers:
         if tr["from_entity"] in feats:
@@ -57,17 +61,46 @@ def build(events: list[dict], transfers: list[dict], correlation_hits: list[dict
         f["night_ratio"] = f["night_events"] / f["total_events"] if f["total_events"] else 0.0
         f["inout_ratio"] = (f["total_out"] / f["total_in"]) if f["total_in"] else 0.0
         f["max_rapid_forward"] = _max_rapid_forward(f["credits"], f["debits"])
+        f["max_calls_hour"] = _max_in_window(f["call_times"], 60)
+        f["max_dormancy_days"] = _max_gap_days(f["txn_times"])
     return feats
 
 
+def _max_in_window(times: list, minutes: int) -> int:
+    """Max number of events within any sliding window of `minutes` (comm-burst signal)."""
+    if not times:
+        return 0
+    ts = sorted(times)
+    win = timedelta(minutes=minutes)
+    best = 1
+    j = 0
+    for i in range(len(ts)):
+        while ts[i] - ts[j] > win:
+            j += 1
+        best = max(best, i - j + 1)
+    return best
+
+
+def _max_gap_days(times: list) -> float:
+    """Largest gap (days) between consecutive transactions — dormant-then-active signal."""
+    if len(times) < 2:
+        return 0.0
+    ts = sorted(times)
+    return max((ts[i] - ts[i - 1]).total_seconds() for i in range(1, len(ts))) / 86400.0
+
+
 def _max_rapid_forward(credits, debits, hold_minutes: int = 120) -> float:
-    """Largest fraction of a credit forwarded out within the hold window."""
+    """Largest fraction of a credit forwarded out within the hold window.
+
+    A3: computed within the same asset only — you can't 'forward' an INR credit as a
+    crypto debit, and mixing the two produces meaningless ratios.
+    """
     best = 0.0
-    debits = sorted(debits)
-    for tc, ac in credits:
+    debits = sorted(debits, key=lambda d: d[0])
+    for tc, ac, asset in credits:
         if not ac:
             continue
         hi = tc + timedelta(minutes=hold_minutes)
-        forwarded = sum(ad for (td, ad) in debits if tc <= td <= hi)
+        forwarded = sum(ad for (td, ad, da) in debits if da == asset and tc <= td <= hi)
         best = max(best, min(1.0, forwarded / ac))
     return round(best, 3)
