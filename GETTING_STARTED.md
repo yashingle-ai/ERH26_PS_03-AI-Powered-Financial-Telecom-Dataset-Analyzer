@@ -444,6 +444,31 @@ npm run build        # production build
 5. To link an account to a phone/wallet manually, copy
    `datasets/entity_map.template.csv` to `entity_map.csv` in your dataset folder.
 
+> ### If you get zero correlation hits on a real case, read this
+> The call+IP+transfer correlation only fires when **one entity** owns all three event
+> types. Bank statements are keyed by account number and CDR/IPDR by phone, so unless
+> something links them the two halves of the case never meet and the hit count is
+> legitimately zero — no error is raised.
+>
+> On the real FIR case in this repo, entity resolution produces 4,987 phone-only
+> entities and 131 account-only entities, and **zero** that carry both. Correlation is
+> therefore structurally impossible until the bridge exists.
+>
+> Three ways an account gets bridged to a phone:
+> 1. The statement carries a registered mobile in its header block (parsed automatically).
+> 2. A UPI narration contains a phone-based VPA, e.g. `UPI/…/9876543210@ybl/…`
+>    (mined automatically).
+> 3. **You supply it** — the usual case. Investigators hold this from KYC/CAF. Drop an
+>    `entity_map.csv` in the dataset folder:
+>    ```csv
+>    account_no,phone,wallet,upi_id
+>    50200099412403,9876543210,,
+>    ```
+>    No code change needed; the pipeline merges the identifiers into one entity.
+>
+> Check where you stand before blaming the correlator: if `/v1/entities/{ds}` shows no
+> entity with both an `ACCOUNT_NO` and a `PHONE` identifier, you need the map.
+
 > ### ⚠️ Real case data
 > `datasets/` is **deny-by-default** in both `.gitignore` and `.dockerignore` — a new case
 > folder is ignored automatically, so you cannot accidentally commit evidence or bake it

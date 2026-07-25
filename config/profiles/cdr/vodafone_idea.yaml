@@ -5,7 +5,17 @@ profile:
   source: CDR
   event_type: CALL
   match:
-    required_any: ["Target /A PARTY NUMBER", "A PARTY NUMBER", "Call Initiation Time"]
+    # Must stay in step with the entity_phone aliases below: required_any is the gate
+    # that says "this file is this kind of thing", so any header that can carry the
+    # A-party belongs here. The underscore variants (Mobile_No / Other_Party_No) are a
+    # real export dialect — omitting them meant those files failed the gate and were
+    # dropped entirely once required_any started being enforced.
+    required_any:
+      - "Target /A PARTY NUMBER"
+      - "A PARTY NUMBER"
+      - "Mobile_No"
+      - "Call Initiation Time"
+      - "Call_Initiation_Time(CIT)"
     required_all: []
 field_map:
   entity_phone:

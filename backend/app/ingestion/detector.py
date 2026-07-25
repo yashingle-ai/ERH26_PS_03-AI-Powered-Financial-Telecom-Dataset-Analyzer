@@ -93,9 +93,20 @@ def score_profile(headers: list[str], profile: dict) -> float:
     CDR file just because both carry IMEI.
     """
     hset = {h.strip().lower() for h in headers if h}
-    match = profile.get("match", {})
+    # `match` lives under the `profile:` block in every profile YAML. Reading it from the
+    # top level silently returned {} for all of them, so this gate never fired and the
+    # exact failure it exists to prevent was live: real TRAI IPDR exports were scoring as
+    # cdr_vodafone_idea purely on shared IMEI/IMSI columns, and were normalized as CALL
+    # events. The top-level lookup is kept as a fallback for flat profile dicts.
+    match = profile.get("profile", {}).get("match") or profile.get("match", {})
+
     req_any = [a.strip().lower() for a in match.get("required_any", [])]
     if req_any and not any(a in hset for a in req_any):
+        return 0.0
+
+    # required_all was declared in the schema but never enforced.
+    req_all = [a.strip().lower() for a in match.get("required_all", [])]
+    if req_all and not all(a in hset for a in req_all):
         return 0.0
 
     fields = profile.get("field_map", {})

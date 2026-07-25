@@ -1,0 +1,74 @@
+# TRAI-standard IPDR export (real FIR case data — Jio/Vodafone IPv6 IPDR).
+#
+# The mandated column set uses long descriptive labels ("Start Date of Public IP Address
+# allocation (dd/mm/yyyy)") that matched neither ipdr_generic nor ipdr_iprange. With no
+# IPDR profile scoring, these files fell through to cdr_vodafone_idea on shared IMSI/CGI
+# columns and were normalized as CALL events instead of IP sessions — which is why the
+# case yielded only 7 IP sessions and zero call+IP+transfer correlations.
+profile:
+  id: ipdr_trai_standard
+  source: IPDR
+  event_type: IP_SESSION
+  match:
+    required_any:
+      - "Public IP Address"
+      - "Start Date of Public IP Address allocation (dd/mm/yyyy)"
+      - "Landline/MSISDN/MDN/Leased Circuit ID for Internet Access"
+    required_all: []
+field_map:
+  entity_phone:
+    aliases:
+      - "Landline/MSISDN/MDN/Leased Circuit ID for Internet Access"
+      - "Landline/MSISDN/MDN/Leased Circuit ID"
+      - "MSISDN"
+    type: phone
+  ip_public:
+    aliases: ["Public IP Address", "Public IP"]
+    type: string
+  ip_private:
+    aliases:
+      - "Source IP Address (IP Address Assigned/Translated)"
+      - "Source IP Address"
+    type: string
+  attributes.port:
+    aliases: ["Public IP Port", "Source Port (Port Assigned/Translated)", "Source Port"]
+    type: string
+  attributes.dest_ip:
+    aliases: ["Destination IP Address"]
+    type: string
+  attributes.dest_port:
+    aliases: ["Destination Port"]
+    type: string
+  date_col:
+    aliases: ["Start Date of Public IP Address allocation (dd/mm/yyyy)"]
+    type: date
+  time_col:
+    aliases: ["IST Start Time of Public IP address allocation (hh:mm:ss)"]
+    type: time
+  end_date_col:
+    aliases: ["End Date of Public IP address allocation (dd/mm/yyyy)"]
+    type: date
+  end_time_col:
+    aliases: ["IST End Time of Public IP address allocation (hh:mm:ss)"]
+    type: time
+  imsi:
+    aliases: ["IMSI"]
+    type: string
+  attributes.cell_id:
+    aliases: ["CGI ID"]
+    type: string
+  attributes.apn:
+    aliases: ["Access Point Name"]
+    type: string
+  attributes.bytes_up:
+    aliases: ["Data Volume Up Link"]
+    type: int
+  attributes.bytes_down:
+    aliases: ["Data Volume Down Link"]
+    type: int
+  attributes.session_duration:
+    aliases: ["Session Duration"]
+    type: int
+  attributes.circle:
+    aliases: ["Roaming Circle"]
+    type: string

@@ -137,3 +137,49 @@ def test_event_sort_fallback_is_timezone_aware():
         key=lambda e: e.get("timestamp_start") or datetime.min.replace(tzinfo=UTC),
     )
     assert ordered[0]["timestamp_start"] is None
+
+
+# ── Profile-matching gate ──────────────────────────────────────────────────────
+
+def test_required_any_gate_is_actually_enforced():
+    """`match` lives under the `profile:` block. Reading it from the top level returned
+    {} for every profile, so the gate never fired and real IPDR exports were scored as
+    CDR on shared IMEI/IMSI columns alone."""
+    profile = {
+        "profile": {"id": "x", "source": "CDR",
+                    "match": {"required_any": ["A PARTY NUMBER"]}},
+        "field_map": {"imei": {"aliases": ["IMEI"]}, "imsi": {"aliases": ["IMSI"]}},
+    }
+    # Shares IMEI/IMSI but has no A-party -> must be rejected outright, not scored.
+    assert detector.score_profile(["IMEI", "IMSI", "Public IP Address"], profile) == 0.0
+    assert detector.score_profile(["A PARTY NUMBER", "IMEI"], profile) > 0.0
+
+
+def test_required_all_gate_is_enforced():
+    profile = {
+        "profile": {"id": "x", "match": {"required_all": ["IMEI", "IMSI"]}},
+        "field_map": {"imei": {"aliases": ["IMEI"]}, "imsi": {"aliases": ["IMSI"]}},
+    }
+    assert detector.score_profile(["IMEI"], profile) == 0.0
+    assert detector.score_profile(["IMEI", "IMSI"], profile) > 0.0
+
+
+def test_every_profile_gate_is_reachable_from_its_own_aliases():
+    """A required_any entry that appears in no field_map alias is almost always drift:
+    the gate then rejects files the profile is otherwise able to map. This caught
+    cdr_vodafone_idea, whose gate omitted the Mobile_No dialect it maps."""
+    from backend.app.core import config
+
+    problems = []
+    for plist in config.profiles().values():
+        for prof in plist:
+            gate = prof.get("profile", {}).get("match", {}).get("required_any", [])
+            if not gate:
+                continue
+            aliases = {a.strip().lower()
+                       for spec in prof.get("field_map", {}).values()
+                       for a in spec.get("aliases", [])}
+            unknown = [g for g in gate if g.strip().lower() not in aliases]
+            if unknown:
+                problems.append((prof["profile"]["id"], unknown))
+    assert not problems, f"required_any entries not present in any alias list: {problems}"
