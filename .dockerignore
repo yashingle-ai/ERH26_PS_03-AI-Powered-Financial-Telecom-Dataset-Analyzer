@@ -1,0 +1,54 @@
+# Docker does NOT read .gitignore. Without this file `COPY . .` ships the whole
+# working tree to the daemon — including datasets/, which holds real FIR evidence.
+# That both makes local builds unusable (multi-GB build context) and would bake
+# case data into the image. Keep this in step with .gitignore.
+
+# ── Real case data — never goes in an image ─────────────────────────────
+datasets/*
+!datasets/raw/
+datasets/raw/*
+!datasets/raw/demo/
+!datasets/raw/smoke/
+!datasets/metadata/
+*.zip
+
+data/uploads/*
+data/outputs/*
+data/samples/*
+data/*.db
+data/*.sqlite3
+
+# ── Environments & caches ───────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Frontend (the image serves the API, not the SPA) ────────────────────
+frontend/node_modules/
+frontend/.output/
+frontend/dist/
+frontend/build/
+frontend/.wrangler/
+
+# ── VCS, docs, editor ───────────────────────────────────────────────────
+.git/
+.github/
+.claude/
+.idea/
+.vscode/
+.DS_Store
+research/
+Research/
+artifacts/
+docs/
+*.md
+!README.md
+
+# ── Secrets ─────────────────────────────────────────────────────────────
+.env
+*.local
