@@ -71,7 +71,10 @@ export type AnalyzeSummary = {
   transactions: number;
   calls: number;
   ip_sessions: number;
-  rejects: number;
+  /** Rows dropped during normalization, summed across every reject entry. */
+  rejected_rows: number;
+  /** Number of distinct (file, reason) reject groups behind `rejected_rows`. */
+  reject_entries: number;
   entities: number;
   correlation_hits: number;
   transfers: number;
@@ -174,6 +177,56 @@ export type EventDto = {
   };
 };
 
+/** A bank account whose running balance does not reconcile (A5). */
+export type BalanceBreakDto = {
+  account: string;
+  checked: number;
+  breaks: number;
+  first_break_ref?: string | null;
+  consistency: number | null;
+};
+
+/** Per-file / per-reason breakdown of rows dropped at ingestion (B3). */
+export type RejectDto = {
+  file?: string | null;
+  reason?: string | null;
+  rows?: number | null;
+  rejected?: number | null;
+  [key: string]: unknown;
+};
+
+export type DataQualityResponse = {
+  balance_breaks: BalanceBreakDto[];
+  rejects: RejectDto[];
+  parsed_files: Record<string, unknown>[];
+};
+
+/**
+ * A candidate same-actor pair surfaced for analyst review (C3).
+ * Never auto-merged — deterministic resolution stays authoritative.
+ */
+export type LinkSuggestionDto = {
+  entity_a: string;
+  label_a: string;
+  entity_b: string;
+  label_b: string;
+  similarity: number;
+};
+
+export type SuggestionsResponse = {
+  total: number;
+  items: LinkSuggestionDto[];
+  threshold: number;
+};
+
+/** Rule-based NL query result (F1). `rows` is null when the query wasn't understood. */
+export type NlQueryResponse = {
+  query: string;
+  explanation: string;
+  rows: Record<string, unknown>[] | null;
+  matched: number;
+};
+
 export const api = {
   baseUrl: API_BASE,
 
@@ -231,5 +284,27 @@ export const api = {
   graph(dataset: string, window = 10) {
     const q = new URLSearchParams({ window: String(window) });
     return request<GraphPayload>(`/v1/graph/${encodeURIComponent(dataset)}?${q}`);
+  },
+
+  dataQuality(dataset: string, window = 10) {
+    const q = new URLSearchParams({ window: String(window) });
+    return request<DataQualityResponse>(`/v1/data-quality/${encodeURIComponent(dataset)}?${q}`);
+  },
+
+  suggestions(dataset: string, window = 10, threshold = 0.88, limit = 50) {
+    const q = new URLSearchParams({
+      window: String(window),
+      threshold: String(threshold),
+      limit: String(limit),
+    });
+    return request<SuggestionsResponse>(`/v1/suggestions/${encodeURIComponent(dataset)}?${q}`);
+  },
+
+  query(dataset: string, q: string, windowMinutes = 10) {
+    return request<NlQueryResponse>(`/v1/query/${encodeURIComponent(dataset)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q, window_minutes: windowMinutes }),
+    });
   },
 };

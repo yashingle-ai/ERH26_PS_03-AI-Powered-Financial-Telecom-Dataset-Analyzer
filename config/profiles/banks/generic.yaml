@@ -1,39 +1,53 @@
 # Generic bank statement mapping profile (FR-4)
-# Maps common source column names -> canonical Event(TRANSACTION) fields (Doc 06 §5).
-# `aliases` let auto-detection match varied header spellings.
+# Maps common Indian bank statement column names -> canonical Event(TRANSACTION) (Doc 06 §5).
+# Covers header-block identity AND per-row account columns (real SOA/ICORE exports).
 profile:
   id: bank_generic
   source: BANK
   event_type: TRANSACTION
   match:
-    # Header keywords used by auto-detection to select this profile
-    required_any: ["narration", "description", "particulars"]
+    required_any: ["narration", "description", "particulars", "tran_id", "transaction id"]
     required_all: []
 field_map:
   timestamp_start:
-    aliases: ["Transaction Date", "Txn Date", "Date", "Value Date", "Tran Date"]
+    aliases: ["Transaction Date", "Txn Date", "Date", "Value Date", "Tran Date", "Tran_Date",
+              "Txn_Date", "pstd_dt", "Posting Date", "Date of Transaction"]
     type: datetime
   attributes.narration:
-    aliases: ["Narration", "Description", "Particulars", "Remarks"]
+    aliases: ["Narration", "Description", "Particulars", "Remarks", "Transaction Remarks",
+              "Transaction Details"]
     type: string
   debit:
-    aliases: ["Debit", "Withdrawal", "Withdrawal Amt", "Dr"]
+    aliases: ["Debit", "Withdrawal", "Withdrawal Amt", "Dr", "Dr_Amt", "Debit Amount",
+              "Withdrawal Amount (INR )", "DR", "Debit(Dr)"]
     type: decimal
   credit:
-    aliases: ["Credit", "Deposit", "Deposit Amt", "Cr"]
+    aliases: ["Credit", "Deposit", "Deposit Amt", "Cr", "Cr_Amt", "Credit Amount",
+              "Deposit Amount (INR )", "CR", "Credit(Cr)"]
     type: decimal
   attributes.balance:
-    aliases: ["Balance", "Closing Balance", "Running Balance"]
+    aliases: ["Balance", "Closing Balance", "Running Balance", "Balance (INR )",
+              "Available Balance", "Balance Amount"]
     type: decimal
   attributes.ref_no:
-    aliases: ["Ref No", "Reference", "Cheque No", "Transaction ID", "UTR", "RRN"]
+    aliases: ["Ref No", "Reference", "Cheque No", "Transaction ID", "UTR", "RRN",
+              "Tran_ID", "Tran ID", "Transaction_ID", "Chq/Ref Number", "Instrument Number",
+              "Inst_Num", "Cheque Number", "Ref/Cheque No"]
     type: string
-# Identity fields typically live in the statement header block, not per-row
+  # Per-row account/holder columns (present in SOA/ICORE statements)
+  account_no:
+    aliases: ["Ac_No", "acct_number", "Account Number", "A/C No", "Account No", "Account No.",
+              "AccountNo", "ACCOUNT NO"]
+    type: string
+  account_holder:
+    aliases: ["AC_Name", "Account Name", "Customer Name", "Name", "Account Holder"]
+    type: string
+# Identity fields when they live in the statement header block (not per-row)
 header_identity:
   account_no:
-    aliases: ["Account Number", "A/C No", "Account No"]
+    aliases: ["Account Number", "A/C No", "Account No", "Ac_No", "acct_number"]
   account_holder:
-    aliases: ["Account Name", "Customer Name", "Name"]
+    aliases: ["Account Name", "Customer Name", "Name", "AC_Name"]
   registered_mobile:
     aliases: ["Registered Mobile", "Customer Mobile", "Mobile", "Mobile Number", "Phone"]
 # Narration mining: extract embedded identifiers via regex (FR-10)

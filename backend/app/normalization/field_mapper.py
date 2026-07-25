@@ -21,5 +21,8 @@ def map_record(raw: dict, profile: dict) -> dict:
             continue
         target = idx.get(str(header).strip().lower())
         if target:
+            # strip surrounding quotes real exports wrap around values ('919099102222')
+            if isinstance(value, str):
+                value = value.strip().strip("'\"")
             out[target] = value
     return out

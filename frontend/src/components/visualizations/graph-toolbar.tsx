@@ -59,8 +59,8 @@ export function GraphToolbar({
     <div
       className="absolute right-3 top-3 z-20 flex flex-col gap-1 rounded-xl p-1.5 shadow-xl animate-slide-in"
       style={{
-        backgroundColor: "oklch(0.20 0.03 250 / 0.9)",
-        border: "1px solid oklch(0.36 0.03 250)",
+        backgroundColor: "var(--overlay-bg)",
+        border: "1px solid var(--overlay-border)",
         backdropFilter: "blur(12px)",
       }}
     >

@@ -30,7 +30,8 @@ def structuring(feats, cfg):
     lo = thr * (1 - r["just_below_band_pct"])
     flags = []
     for eid, f in feats.items():
-        near = [a for (_t, a) in f["credits"] if lo <= a < thr]
+        # A3: the reporting threshold is an INR fiat limit — only count INR credits.
+        near = [a for (_t, a, asset) in f["credits"] if asset == "INR" and lo <= a < thr]
         if len(near) >= r["min_occurrences"]:
             flags.append({"entity_id": eid, "rule": "structuring", "weight": r["weight"],
                           "detail": f"{len(near)} credits in [{lo:.0f}, {thr:.0f}) "
@@ -64,9 +65,22 @@ def mule_account(feats, cfg):
     return flags
 
 
-def _transfer_digraph(transfers):
+def _passes_amount_gate(tr, min_amount_inr) -> bool:
+    """D1: drop tiny INR transfers (benign noise) from structural detection; always keep
+    non-INR (crypto) edges since their unit amounts aren't comparable to an INR floor."""
+    if not min_amount_inr:
+        return True
+    if (tr.get("asset") or "INR") != "INR":
+        return True
+    amt = tr.get("amount")
+    return amt is None or amt >= min_amount_inr
+
+
+def _transfer_digraph(transfers, min_amount_inr=0):
     g = nx.DiGraph()
     for tr in transfers:
+        if not _passes_amount_gate(tr, min_amount_inr):
+            continue
         g.add_edge(tr["from_entity"], tr["to_entity"], amount=tr.get("amount"), time=tr.get("time"))
     return g
 
@@ -75,7 +89,7 @@ def circular_flow(transfers, cfg):
     r = _enabled(cfg, "circular_flow")
     if not r:
         return []
-    g = _transfer_digraph(transfers)
+    g = _transfer_digraph(transfers, r.get("min_amount_inr", 0))
     limits = config.graph_limits()
     # review fix C4: bound worst-case-exponential cycle enumeration by count AND time.
     try:
@@ -110,7 +124,7 @@ def layering(transfers, cfg):
     r = _enabled(cfg, "layering")
     if not r:
         return []
-    g = _transfer_digraph(transfers)
+    g = _transfer_digraph(transfers, r.get("min_amount_inr", 0))
     span = timedelta(hours=r["max_span_hours"])
     min_hops = r["min_hops"]
     flagged = set()
@@ -155,6 +169,26 @@ def call_transfer_coincidence(feats, cfg):
             for eid, f in feats.items() if f["coincidence_count"] > 0]
 
 
+def comm_burst(feats, cfg):
+    r = _enabled(cfg, "comm_burst")
+    if not r:
+        return []
+    thr = r["max_calls_per_hour"]
+    return [{"entity_id": eid, "rule": "comm_burst", "weight": r["weight"],
+             "detail": f"{f['max_calls_hour']} calls within one hour (burst)"}
+            for eid, f in feats.items() if f.get("max_calls_hour", 0) >= thr]
+
+
+def dormant_activation(feats, cfg):
+    r = _enabled(cfg, "dormant_activation")
+    if not r:
+        return []
+    thr = r["min_dormancy_days"]
+    return [{"entity_id": eid, "rule": "dormant_activation", "weight": r["weight"],
+             "detail": f"reactivated after {f['max_dormancy_days']:.0f} days dormant"}
+            for eid, f in feats.items() if f.get("max_dormancy_days", 0) >= thr]
+
+
 def run_all(feats, transfers, cfg):
     flags = []
     flags += structuring(feats, cfg)
@@ -163,4 +197,6 @@ def run_all(feats, transfers, cfg):
     flags += circular_flow(transfers, cfg)
     flags += layering(transfers, cfg)
     flags += call_transfer_coincidence(feats, cfg)
+    flags += comm_burst(feats, cfg)
+    flags += dormant_activation(feats, cfg)
     return flags

@@ -9,17 +9,24 @@ EVENT_COLOR = {"TRANSACTION": "#d62728", "CALL": "#1f77b4", "IP_SESSION": "#2ca0
 EVENT_ROW = {"TRANSACTION": 3, "CALL": 2, "IP_SESSION": 1}
 
 
-def timeline_figure(events: list[dict], label: str = "") -> go.Figure:
+def timeline_figure(events: list[dict], label: str = "", max_points: int = 1500) -> go.Figure:
     fig = go.Figure()
     for etype in ("TRANSACTION", "CALL", "IP_SESSION"):
         evs = [e for e in events if e["event_type"] == etype]
         if not evs:
             continue
+        # E5: downsample very dense series so the chart stays responsive
+        if len(evs) > max_points:
+            step = len(evs) // max_points + 1
+            evs = sorted(evs, key=lambda e: e["timestamp_start"])[::step]
+            etype_label = f"{etype} (sampled)"
+        else:
+            etype_label = etype
         xs = [e["timestamp_start"] for e in evs]
         ys = [EVENT_ROW[etype]] * len(evs)
         texts = [_event_hover(e) for e in evs]
         fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode="markers", name=etype,
+            x=xs, y=ys, mode="markers", name=etype_label,
             marker=dict(size=11, color=EVENT_COLOR[etype], line=dict(width=1, color="white")),
             text=texts, hoverinfo="text",
         ))

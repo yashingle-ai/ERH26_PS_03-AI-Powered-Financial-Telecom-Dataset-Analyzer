@@ -1,0 +1,28 @@
+# Real IPDR export: IP usage over time ranges (xlsx). No MSISDN in-sheet — the
+# subscriber is contextual (filename/case), so primary entity is the IP itself.
+profile:
+  id: ipdr_iprange
+  source: IPDR
+  event_type: IP_SESSION
+  match:
+    required_any: ["VALUE", "F DATE", "T DATE"]
+    required_all: []
+field_map:
+  ip_public:
+    aliases: ["VALUE", "IP Address", "Public IP"]
+    type: ip
+  attributes.ip_version:
+    aliases: ["IP"]
+    type: string
+  date_col:
+    aliases: ["F DATE"]
+    type: date_yyyymmdd
+  time_col:
+    aliases: ["F TIME"]
+    type: time_hhmmss
+  end_date_col:
+    aliases: ["T DATE"]
+    type: date_yyyymmdd
+  end_time_col:
+    aliases: ["T TIME"]
+    type: time_hhmmss

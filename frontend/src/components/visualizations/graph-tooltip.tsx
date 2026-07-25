@@ -25,8 +25,8 @@ export function GraphTooltip({ x, y, label, kind, risk, degree, visible }: Graph
       <div
         className="rounded-lg px-3 py-2.5 shadow-xl"
         style={{
-          backgroundColor: "oklch(0.20 0.03 250 / 0.95)",
-          border: "1px solid oklch(0.38 0.03 250)",
+          backgroundColor: "var(--overlay-bg)",
+          border: "1px solid var(--overlay-border)",
           backdropFilter: "blur(12px)",
         }}
       >

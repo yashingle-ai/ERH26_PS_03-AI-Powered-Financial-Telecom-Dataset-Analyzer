@@ -67,11 +67,18 @@ def _metrics(g: nx.MultiDiGraph) -> dict:
     for n in g.nodes:
         simple.add_node(n)
 
+    # Exact betweenness is O(V*E) — too slow on large real graphs. Sample k pivots when big.
+    n_nodes = simple.number_of_nodes()
     try:
-        centrality = nx.betweenness_centrality(simple, weight="weight")
+        if n_nodes > 800:
+            k = min(200, n_nodes)
+            centrality = nx.betweenness_centrality(simple, k=k, weight="weight", seed=42)
+            log.info("large graph (%d nodes): approx betweenness with k=%d pivots", n_nodes, k)
+        else:
+            centrality = nx.betweenness_centrality(simple, weight="weight")
     except Exception as e:
-        log.warning("betweenness_centrality failed (%s); defaulting to 0", e)
-        centrality = {n: 0.0 for n in simple.nodes}
+        log.warning("betweenness_centrality failed (%s); falling back to degree", e)
+        centrality = {n: simple.degree(n) for n in simple.nodes}
     degree = dict(simple.degree())
     undirected = simple.to_undirected()
     communities: dict[str, int] = {}

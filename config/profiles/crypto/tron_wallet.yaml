@@ -1,0 +1,33 @@
+# Real crypto (Tron) wallet transaction export — the money-flow data in these cases.
+# From/To are wallet addresses (entities); this yields the money-flow graph (FR-14).
+profile:
+  id: crypto_tron_wallet
+  source: CRYPTO
+  event_type: TRANSACTION
+  source_tz: UTC          # A1: Tron exports are UTC; normalized to canonical IST
+  asset: CRYPTO           # A3: keep crypto value separate from INR
+  match:
+    required_any: ["Txn Hash", "Token Symbol"]
+    required_all: []
+field_map:
+  from_addr:
+    aliases: ["From"]
+    type: string
+  to_addr:
+    aliases: ["To"]
+    type: string
+  amount:
+    aliases: ["Amount/TokenID", "Amount", "Value"]
+    type: decimal
+  datetime_col:
+    aliases: ["Time(UTC)", "Time (UTC)", "Timestamp"]
+    type: datetime
+  attributes.token:
+    aliases: ["Token Symbol", "Token"]
+    type: string
+  attributes.txn_hash:
+    aliases: ["Txn Hash", "Transaction Hash"]
+    type: string
+  attributes.status:
+    aliases: ["Status", "Result"]
+    type: string

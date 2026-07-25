@@ -1,55 +1,62 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 .venv/
 venv/
 *.egg-info/
 .pytest_cache/
-.ruff_cache/
 .mypy_cache/
-htmlcov/
-.coverage
-*.cover
+.ruff_cache/
 
-# Secrets / local env
+# Env & secrets
 .env
-.env.*
-!.env.example
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
+*.local
 
-# Node / frontend build
-frontend/node_modules/
-frontend/dist/
-frontend/.output/
-frontend/.vinxi/
-frontend/.nitro/
-frontend/.tanstack/
-*.log
-npm-debug.log*
-
-# Frontend test coverage
-frontend/coverage/
-
-# Runtime outputs (regenerated locally)
-data/uploads/
-data/reports/
+# Runtime data. Reports/charts are rendered FROM case data, so they inherit its
+# sensitivity — generated output never gets committed.
+data/uploads/*
+!data/uploads/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+data/samples/*
+!data/samples/.gitkeep
 data/*.db
 data/*.sqlite3
-data/models/
-*.db
-*.sqlite3
 
-# OS / IDE
+# ─────────────────────────────────────────────────────────────────────────────
+# REAL CASE DATA — DENY BY DEFAULT.
+# datasets/ holds FIR evidence: bank statements, CDR, IPDR, CCTV, personal docs
+# on real people. Everything here is ignored unless explicitly allow-listed
+# below, so a new case folder is never committed just because nobody added a
+# rule for it. Only the synthetic generator output is allowed through.
+# ─────────────────────────────────────────────────────────────────────────────
+datasets/*
+!datasets/raw/
+!datasets/metadata/
+!datasets/entity_map.template.csv
+
+datasets/raw/*
+!datasets/raw/demo/
+!datasets/raw/smoke/
+
+datasets/metadata/*
+!datasets/metadata/demo_metadata.json
+!datasets/metadata/smoke_metadata.json
+
+# Archives of case data
+*.zip
+
+!**/.gitkeep
+
+# OS / editor
 .DS_Store
-Thumbs.db
 .idea/
 .vscode/
-*.swp
 
-# Lovable / local agent noise
-frontend/.lovable/
+# Per-machine tool settings (paths differ per developer)
+.claude/settings.local.json
 
-# NOTE: artifacts/ is intentionally tracked — it contains project documentation
+# Node (frontend, later)
+node_modules/
+frontend/build/
+frontend/dist/

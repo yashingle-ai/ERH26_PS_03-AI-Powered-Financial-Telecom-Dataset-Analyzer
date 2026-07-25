@@ -10,8 +10,8 @@ def test_ingestion_detects_all_sources(smoke_dataset):
     pfs = ing.parse_directory(smoke_dataset)
     sources = {pf.source_type for pf in pfs}
     assert {"BANK", "CDR", "IPDR"} <= sources
-    # confidence high -> no manual mapping needed on synthetic data
-    assert all(pf.confidence >= 0.8 for pf in pfs if pf.source_type)
+    # confidence clears the auto-detect gate -> no manual mapping needed on synthetic data
+    assert all(not pf.needs_manual_mapping for pf in pfs if pf.source_type)
 
 
 def test_entity_fusion(smoke_dataset):

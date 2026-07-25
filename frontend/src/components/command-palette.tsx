@@ -110,9 +110,9 @@ export function CommandPalette() {
         <Command
           className="overflow-hidden rounded-xl shadow-2xl"
           style={{
-            backgroundColor: "oklch(0.24 0.03 250)",
-            border: "1px solid oklch(0.38 0.03 250)",
-            boxShadow: "0 0 0 1px oklch(0.38 0.03 250 / 0.5), 0 25px 60px -15px rgba(0,0,0,0.6)",
+            backgroundColor: "var(--overlay-bg)",
+            border: "1px solid var(--overlay-border)",
+            boxShadow: "var(--overlay-shadow-lg)",
           }}
           label="Command palette"
           onKeyDown={(e) => {
@@ -125,21 +125,21 @@ export function CommandPalette() {
           {/* Search input */}
           <div
             className="flex items-center gap-2.5 px-4"
-            style={{ borderBottom: "1px solid oklch(0.32 0.02 250)" }}
+            style={{ borderBottom: "1px solid var(--border)" }}
           >
             <Search className="h-4 w-4 shrink-0 text-primary" />
             <Command.Input
               ref={inputRef}
               placeholder="Search pages, entities, rules, datasets…"
               className="text-mono h-12 w-full bg-transparent text-[13px] outline-none placeholder:text-muted-foreground/60"
-              style={{ color: "oklch(0.95 0.01 240)" }}
+              style={{ color: "var(--foreground)" }}
             />
             <button
               onClick={() => setOpen(false)}
               className="flex h-6 items-center rounded border px-1.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
               style={{
-                borderColor: "oklch(0.38 0.03 250)",
-                backgroundColor: "oklch(0.27 0.02 250)",
+                borderColor: "var(--overlay-border)",
+                backgroundColor: "var(--overlay-muted)",
               }}
             >
               ESC
@@ -165,7 +165,7 @@ export function CommandPalette() {
                   value={`page ${page.label}`}
                   onSelect={() => go(page.to, page.search)}
                   className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                  style={{ color: "oklch(0.88 0.01 240)" }}
+                  style={{ color: "var(--foreground)" }}
                 >
                   <page.icon className="h-4 w-4 text-muted-foreground" />
                   {page.label}
@@ -187,7 +187,7 @@ export function CommandPalette() {
                       go("/entities", { id: entity.id, rule: undefined })
                     }
                     className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                    style={{ color: "oklch(0.88 0.01 240)" }}
+                    style={{ color: "var(--foreground)" }}
                   >
                     <KindIcon kind={entity.kind} />
                     <div className="min-w-0 flex-1">
@@ -221,7 +221,7 @@ export function CommandPalette() {
                       go("/entities", { id: undefined, rule: d.name })
                     }
                     className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                    style={{ color: "oklch(0.88 0.01 240)" }}
+                    style={{ color: "var(--foreground)" }}
                   >
                     <ShieldAlert className="h-4 w-4 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
@@ -253,7 +253,7 @@ export function CommandPalette() {
                     value={`dataset ${ds}`}
                     onSelect={() => go("/overview")}
                     className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                    style={{ color: "oklch(0.88 0.01 240)" }}
+                    style={{ color: "var(--foreground)" }}
                   >
                     <FolderSearch className="h-4 w-4 text-muted-foreground" />
                     <div className="truncate">{ds.toUpperCase()}</div>
@@ -274,7 +274,7 @@ export function CommandPalette() {
                 value="View timeline for all entities"
                 onSelect={() => go("/timeline", { entity: undefined })}
                 className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                style={{ color: "oklch(0.88 0.01 240)" }}
+                style={{ color: "var(--foreground)" }}
               >
                 <Clock className="h-4 w-4 text-muted-foreground" />
                 View full timeline
@@ -283,7 +283,7 @@ export function CommandPalette() {
                 value="Open network graph visualization"
                 onSelect={() => go("/network")}
                 className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                style={{ color: "oklch(0.88 0.01 240)" }}
+                style={{ color: "var(--foreground)" }}
               >
                 <Share2 className="h-4 w-4 text-muted-foreground" />
                 Open network graph
@@ -292,7 +292,7 @@ export function CommandPalette() {
                 value="Export investigation report PDF"
                 onSelect={() => go("/reports")}
                 className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors aria-selected:bg-primary/15 aria-selected:text-primary"
-                style={{ color: "oklch(0.88 0.01 240)" }}
+                style={{ color: "var(--foreground)" }}
               >
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 Export investigation report
@@ -303,31 +303,31 @@ export function CommandPalette() {
           {/* Footer hints */}
           <div
             className="px-4 py-2.5"
-            style={{ borderTop: "1px solid oklch(0.32 0.02 250)" }}
+            style={{ borderTop: "1px solid var(--border)" }}
           >
             <div className="text-mono flex items-center gap-4 text-[10px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <kbd
                   className="rounded px-1"
-                  style={{ border: "1px solid oklch(0.38 0.03 250)", backgroundColor: "oklch(0.27 0.02 250)" }}
+                  style={{ border: "1px solid var(--overlay-border)", backgroundColor: "var(--overlay-muted)" }}
                 >↑</kbd>
                 <kbd
                   className="rounded px-1"
-                  style={{ border: "1px solid oklch(0.38 0.03 250)", backgroundColor: "oklch(0.27 0.02 250)" }}
+                  style={{ border: "1px solid var(--overlay-border)", backgroundColor: "var(--overlay-muted)" }}
                 >↓</kbd>
                 navigate
               </span>
               <span className="flex items-center gap-1">
                 <kbd
                   className="rounded px-1"
-                  style={{ border: "1px solid oklch(0.38 0.03 250)", backgroundColor: "oklch(0.27 0.02 250)" }}
+                  style={{ border: "1px solid var(--overlay-border)", backgroundColor: "var(--overlay-muted)" }}
                 >↵</kbd>
                 select
               </span>
               <span className="flex items-center gap-1">
                 <kbd
                   className="rounded px-1"
-                  style={{ border: "1px solid oklch(0.38 0.03 250)", backgroundColor: "oklch(0.27 0.02 250)" }}
+                  style={{ border: "1px solid var(--overlay-border)", backgroundColor: "var(--overlay-muted)" }}
                 >Esc</kbd>
                 close
               </span>

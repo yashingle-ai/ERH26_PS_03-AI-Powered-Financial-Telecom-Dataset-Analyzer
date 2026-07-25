@@ -36,15 +36,17 @@ def scoring_rules() -> dict:
 
 @lru_cache(maxsize=1)
 def profiles() -> dict[str, list[dict]]:
-    """Load all mapping profiles grouped by source folder (banks/cdr/ipdr)."""
-    out: dict[str, list[dict]] = {"banks": [], "cdr": [], "ipdr": []}
+    """Load all mapping profiles from every subfolder of config/profiles/.
+
+    Groups are discovered dynamically (banks, cdr, ipdr, crypto, misc, …) so new
+    source types can be added by dropping a folder of YAML profiles — no code change.
+    """
+    out: dict[str, list[dict]] = {}
     base = CONFIG_DIR / "profiles"
-    for group in out:
-        gdir = base / group
-        if not gdir.exists():
-            continue
-        for p in sorted(gdir.glob("*.yaml")):
-            out[group].append(_load_yaml(p))
+    if not base.exists():
+        return out
+    for gdir in sorted(p for p in base.iterdir() if p.is_dir()):
+        out[gdir.name] = [_load_yaml(p) for p in sorted(gdir.glob("*.yaml"))]
     return out
 
 
@@ -54,6 +56,18 @@ def correlation_window_minutes() -> int:
 
 def auto_detect_threshold() -> float:
     return float(settings().get("ingestion", {}).get("auto_detect_confidence_threshold", 0.8))
+
+
+def max_pdf_mb() -> float:
+    return float(settings().get("ingestion", {}).get("max_pdf_mb", 6))
+
+
+def max_preamble_rows() -> int:
+    return int(settings().get("ingestion", {}).get("max_preamble_rows", 30))
+
+
+def max_rows_per_file() -> int:
+    return int(settings().get("ingestion", {}).get("max_rows_per_file", 1_000_000))
 
 
 def timezone_name() -> str:
@@ -103,3 +117,11 @@ def persistence_enabled() -> bool:
 
 def api_version() -> str:
     return settings().get("api", {}).get("version", "v1")
+
+
+def crypto_rate_inr(token: str) -> float | None:
+    """A4: approximate INR value of one unit of `token`, or None if unknown."""
+    if not token:
+        return None
+    rates = settings().get("crypto_rates_inr", {}) or {}
+    return rates.get(str(token).upper())

@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.4.0] — depth/scale remediation (remaining gap-analysis items)
+
+- **B4** bank profiles broadened to real Indian statement columns (Dr_Amt/Cr_Amt/Tran_Date/
+  Ac_No/acct_number…) + per-row account support → real SOA/ICORE statements parse with amounts.
+- **A5** bank running-balance consistency validation (`normalization/validation.py`) surfaced
+  as a data-quality report.
+- **A4** crypto FX valuation — config `crypto_rates_inr`, per-transfer `value_inr`.
+- **C2** IPDR subscriber MSISDN derived from filename when the sheet lacks it.
+- **C4** account-style UPI VPAs link to the payee account; **C5** structured payee-name extraction.
+- **C3** fuzzy same-entity *suggestions* (review-only, never auto-merged) — `entity_resolution/suggestions.py`.
+- **G2** pipeline split into `run_base` (window-independent, cached) + `apply_analysis`
+  (correlation/detection/graph) — window changes no longer re-parse.
+- **G1** per-file row cap (logged, not silent) for pathological inputs.
+- **E4** graph ego-focus + risk/degree threshold controls; **E5** timeline downsampling.
+- **B5** manual column-mapping UI (`ingestion/mapping_writer.py`) — saves a custom profile.
+- Dashboard: added **Quality** (rejects/balance-breaks/fuzzy) and **Mapping** tabs (now 11 tabs).
+
+## [1.3.0] — gap-analysis remediation (correctness, PS gaps, detection, bonus)
+
+Closed the issues in `docs/gap_analysis.md`.
+
+### Correctness (🔴)
+- **A1 Timezone**: per-source timezone (`source_tz`, crypto=UTC) normalized to canonical IST
+  — fixes the 5.5h skew that corrupted crypto timeline/correlation.
+- **A2 Dedup**: duplicate events (same data in `.csv` + `- Reports.xlsx`) dropped on a natural
+  key; reported as a reject entry.
+- **A3 Per-asset**: every Event/transfer tagged with `asset` (INR vs `CRYPTO:<token>`);
+  structuring threshold and rapid-forward computed within a single asset only.
+
+### PS gaps (🟠)
+- **B1** `.docx` table ingestion (bank/account Word docs). **B2** all Excel sheets read
+  (best-sheet selection). **B3** per-file/per-reason reject report (`reject_report()`).
+- **E1** Search now filters by **location** (+ date range) — FR-15 fully met.
+- **E2** Forensic report embeds **charts** (top-risk bar, activity timeline) — FR-16 met.
+
+### Detection (🟠)
+- **D1** min-amount gates on circular-flow/layering (cut INR false positives; crypto kept).
+- **D3** new typologies: **comm_burst**, **dormant_activation** (+ added to ML features).
+
+### Bonus (🔵)
+- **F2** STR upgraded to FIU-IND-style per-subject entries. **F3** risk **heat map** tab
+  (entities × typologies). **F1** rule-based **natural-language query** tab + `search/nl_query.py`.
+
+## [1.2.0] — real hackathon case-data support (FIR 65-2024, FIR-0006-2025 U)
+
+Adapted the backend to ingest and fuse the **actual forensic case folders** (see
+`docs/real_data_support.md`). Verified: FIR-65 → ~102k events, crypto circular-flow +
+layering detected; FIR-6 → ~155k events incl. 45,585 bank txns, rapid-in-out + structuring
+detected. Persist + PDF report confirmed on real data.
+
+### Added
+- Real mapping profiles: `cdr/vodafone_idea`, `cdr/lea`, `cdr/reports`, `ipdr/iprange`,
+  `crypto/tron_wallet`. Profile loader now discovers any `config/profiles/<group>/`.
+- Ingestion: CSV **preamble/header detection**, legacy **.xls** (xlrd), quoted-value
+  stripping, ragged-row tolerance, `include_pdf` opt-out + PDF size cap, `~$`/`._` skip.
+- Datetime: split date+time columns and `yyyymmdd`/`hhmmss` integer formats.
+- Normalizers: real CDR (A/B party, split date+time, call-type directions), IPDR (IP-range,
+  IP-primary entities), **crypto → money-flow TRANSACTION**.
+- Graph: sampled betweenness centrality for large real graphs (>800 nodes).
+- Dashboard/API discover real case folders in `datasets/`; dashboard "Parse PDFs" toggle.
+
+### Fixed
+- **CDR IMEI/IMSI over-merge**: these belong to the report's target subscriber, not each
+  row's A-party — now attributes only, not merge keys (C3 breaker had flagged 1354-id blobs).
+- Row-index crash on non-integer DataFrame indices (`int(r)` → `enumerate`).
+
 ## [1.1.0] — 2026-07-08 — Production-readiness remediation (review board fixes)
 
 ### Security & reliability (blockers)
