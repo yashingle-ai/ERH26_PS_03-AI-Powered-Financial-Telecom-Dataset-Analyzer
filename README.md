@@ -16,6 +16,12 @@ Build strategy: **core-first, incremental with review gates, Streamlit-first UI*
 Current increment: **Phase 0 — foundations + synthetic data generator**. See
 [`docs/progress.md`](docs/progress.md).
 
+## Known gaps
+
+**→ [docs/GAP_ANALYSIS_REAL_DATA.md](docs/GAP_ANALYSIS_REAL_DATA.md)** — every open gap in
+one table, measured against the real case data, with what it would take to close each.
+Start there before picking up work. (The older `docs/gap_analysis.md` is superseded.)
+
 ## Running it
 
 **→ [GETTING_STARTED.md](GETTING_STARTED.md)** — setup, the three ways to run it

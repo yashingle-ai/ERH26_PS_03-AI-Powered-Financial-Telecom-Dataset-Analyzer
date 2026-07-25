@@ -1,3 +1,4 @@
+
 # Gap analysis — measured against the real case data
 
 **Supersedes [`gap_analysis.md`](gap_analysis.md)**, which claims *"All identified items
@@ -8,6 +9,33 @@ updated and should not be used as a status source.
 
 Everything below is **measured on `datasets/FIR 65-2024`**, not estimated. Commands to
 reproduce are in [Reproducing these numbers](#reproducing-these-numbers).
+
+---
+
+## Open gaps — start here
+
+Every unresolved item, in one place. Read this before picking up work; the sections below
+give the evidence and the measurements behind each row.
+
+| ID | Gap | Size / impact | Where |
+|---|---|---|---|
+| **G1** | Scanned evidence has no OCR | 58 images (+18 TIF in archives) | [§4](#4-still-open) |
+| **G2** | Legacy `.doc` (OLE2) unreadable | 37 files | [§4](#4-still-open) |
+| **G3** | Multi-section spreadsheets (several tables stacked in one sheet) | Binance-style exports | [§4](#4-still-open) |
+| **G4** | Password-protected archive members | counted at WARNING; analyst holds the password | [§1](#1-zip-archives-were-never-opened--92-of-them) |
+| **G5** | **Correlation returns 0** — only 1 phone↔account bridge exists | blocks FR-9, the flagship feature | [Why correlation still returns 0](#why-correlation-still-returns-0) |
+| **G6** | PDF parsing is off by default, and that is where the bank evidence is | transactions ×3.3 when enabled | [§3](#3-financial-evidence-is-locked-in-pdf) |
+| **Q1** | DSL: relative dates (*"day before the last transaction"*) | returns a plausible wrong answer | [Known limits of the query DSL](#known-limits-of-the-query-dsl--open) |
+| **Q2** | DSL: absence/negation (*"stopped calling after August"*) | returns roughly the opposite of what was asked | [same](#known-limits-of-the-query-dsl--open) |
+| **Q3** | DSL: cross-entity comparison (*"called both A and B"*) | not representable | [same](#known-limits-of-the-query-dsl--open) |
+| **Q4** | DSL: free-text search across fields | single-field `contains` only | [same](#known-limits-of-the-query-dsl--open) |
+
+**Highest value next:** G6 then G5 (an `entity_map.csv` is the fastest route to a non-zero
+correlation count), then Q2 (smallest DSL change with the worst current failure mode).
+
+**When you close one,** update its row and the measurement it cites — this file is only
+useful while its numbers are true. The previous gap document rotted precisely because
+fixes landed and its status was never revised.
 
 ---
 
@@ -198,10 +226,10 @@ The failing questions are *structural*: they need aggregation over 200k events. 
 retrieval (RAG) cannot do that, so RAG is **not** the right primary mechanism here.
 
 ```
-question ─► Claude (schema vocabulary only) ─► QuerySpec (validated) ─► local executor ─► rows
-                                                     │
-                                        no key / not planned
-                                                     └──► rule-based fallback
+question ─► Gemini (schema vocabulary only) ─► QuerySpec (validated) ─► local executor ─► rows
+                                                      │
+                                         no key / not planned
+                                                      └──► rule-based fallback
 ```
 
 - `backend/app/search/dsl.py` — closed query language (enum fields and operators, no free
@@ -226,6 +254,32 @@ air-gapped deployment keeps working.
 reports) — "what does the charge sheet say about X". That requires sending case text to an
 external service and is gated on revisiting the data-governance decision. Recorded here as
 a follow-on, not built.
+
+### Known limits of the query DSL — open
+
+These are **DSL expressiveness gaps, not planner failures**. The model produces the closest
+valid plan it can; the language has no way to say what the question means, so the answer
+comes back plausible and subtly wrong rather than refused. That is the dangerous shape, so
+each one is listed with what it would take to close it.
+
+| # | Question shape | What happens now | What it needs |
+|---|---|---|---|
+| Q1 | **Relative dates** — *"the day before the last transaction"*, *"the week after the FIR"* | Plans `event_type=TRANSACTION` and drops the relative clause. Returns all transactions, not the ones on that day | An anchor concept: `relative_to` (`first_event`/`last_event`/a literal date) plus an offset, resolved by the executor after the anchor is computed. Cannot be a plain filter — the value depends on the result set |
+| Q2 | **Absence / negation over time** — *"numbers that stopped calling after August"*, *"accounts with no activity since March"* | Plans `group_by=phone` over all calls. Returns the busiest numbers — arguably the opposite of what was asked | A `having` clause over grouped buckets (e.g. `max(timestamp) < X`). The filter must apply *after* grouping; today filters only run before it |
+| Q3 | **Cross-entity comparison** — *"numbers that called both A and B"* | No representation; the planner picks one side | Set intersection across two grouped result sets |
+| Q4 | **Free-text search over narration** | `contains` works on a single field only | Full-text index across narration/location/label, or the RAG path above |
+
+Q1 and Q2 were both observed live against the real case. Q3 and Q4 are known-missing rather
+than observed.
+
+**Guidance until these close:** the endpoint returns the generated `spec`, so an analyst can
+see the query actually run. Any answer to a question of the shapes above should be checked
+against that spec before it is relied on — the plan will look reasonable while omitting the
+part that mattered.
+
+**Suggested order.** Q2 (`having`) is the highest value and the smallest change — it is a
+post-grouping filter pass in `_grouped`. Q1 needs a two-phase execute (resolve anchor, then
+filter) and touches the schema. Q3 and Q4 are larger and should wait for a real need.
 
 ---
 
