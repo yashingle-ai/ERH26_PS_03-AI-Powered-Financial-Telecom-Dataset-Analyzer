@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 from sklearn.ensemble import IsolationForest
@@ -20,6 +21,12 @@ from . import rules as rulemod
 
 log = get_logger(__name__)
 MODEL_VERSION = "isoforest-1.0"
+
+# Anchored to the repo, not the process CWD: `detect()` runs from the API server,
+# the CLI and pytest, each with a different working directory, and a relative
+# path scattered a stray data/models/ tree into whichever one happened to be active.
+ROOT = Path(__file__).resolve().parents[3]
+MODEL_DIR = Path(os.getenv("ERAKSHAK_MODEL_DIR") or (ROOT / "data" / "models"))
 
 _ML_FEATURES = ["txn_count", "total_in", "total_out", "fan_in", "fan_out",
                 "n_ips", "n_imeis", "night_ratio", "inout_ratio",
@@ -41,25 +48,42 @@ def _ml_scores(feats: dict) -> dict[str, float]:
     raw = -model.score_samples(X)  # higher = more anomalous
     lo, hi = raw.min(), raw.max()
     norm = (raw - lo) / (hi - lo) if hi > lo else np.zeros_like(raw)
-    _save_model(model, X.shape, cfg)
+    if _persist_enabled():
+        _save_model(model, X.shape, cfg)
     return {e: float(s) for e, s in zip(eids, norm)}
+
+
+def _persist_enabled() -> bool:
+    """Whether a fitted model should be written to disk.
+
+    Off by default. The forest is refit on every `detect()` call, and `detect()`
+    runs on every read of /v1/analyze, /v1/entities, /v1/graph and friends — so
+    saving unconditionally meant each page view rewrote the committed artifact
+    with a model fit on whatever dataset was being browsed. That is the opposite
+    of the reproducibility this was meant to provide, and on a real case it would
+    silently write a case-derived model into a tracked file.
+
+    Opt in with ERAKSHAK_PERSIST_MODEL=1 when you actually intend to train.
+    """
+    return os.getenv("ERAKSHAK_PERSIST_MODEL", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _save_model(model, shape, cfg) -> None:
     """Review fix M7: persist the fitted model + metadata for reproducibility/versioning."""
     try:
+        import json
+
         import joblib
-        out = os.path.join("data", "models")
-        os.makedirs(out, exist_ok=True)
-        joblib.dump(model, os.path.join(out, f"{MODEL_VERSION}.joblib"))
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, MODEL_DIR / f"{MODEL_VERSION}.joblib")
         meta = {"version": MODEL_VERSION, "features": _ML_FEATURES,
                 "n_samples": shape[0], "n_features": shape[1],
                 "contamination": cfg.get("contamination", 0.05),
                 "random_state": cfg.get("random_state", 42)}
-        import json
-        with open(os.path.join(out, f"{MODEL_VERSION}.meta.json"), "w") as f:
+        with open(MODEL_DIR / f"{MODEL_VERSION}.meta.json", "w") as f:
             json.dump(meta, f, indent=2)
-        log.info("saved model %s (%d samples, %d features)", MODEL_VERSION, shape[0], shape[1])
+        log.info("saved model %s (%d samples, %d features) -> %s",
+                 MODEL_VERSION, shape[0], shape[1], MODEL_DIR)
     except Exception as e:  # persistence must never break detection
         log.warning("model persistence failed: %s", e)
 
