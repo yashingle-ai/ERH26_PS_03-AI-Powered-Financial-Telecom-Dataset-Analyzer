@@ -16,6 +16,12 @@ Build strategy: **core-first, incremental with review gates, Streamlit-first UI*
 Current increment: **Phase 0 — foundations + synthetic data generator**. See
 [`docs/progress.md`](docs/progress.md).
 
+## Running it
+
+**→ [GETTING_STARTED.md](GETTING_STARTED.md)** — setup, the three ways to run it
+(React console, Streamlit dashboard, CLI), a step-by-step walkthrough of every feature,
+and troubleshooting.
+
 ## Quick start (Phase 0)
 
 ```bash
