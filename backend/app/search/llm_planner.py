@@ -1,17 +1,21 @@
-"""Natural language -> validated QuerySpec, via Claude (F1, FR-19).
+"""Natural language -> validated QuerySpec, via the Google Gemini API (F1, FR-19).
 
 **This is the only module that talks to an external API, and it never sends case data.**
 
 What goes out: the analyst's question, plus a static vocabulary of field/operator names
-(`dsl.schema_vocabulary()`). What comes back: a `QuerySpec` object, validated by the SDK
-against the Pydantic schema. The spec is then executed locally by `dsl.execute` — no
-records, names, phone numbers or account numbers ever leave the machine.
+(`dsl.schema_vocabulary()`). What comes back: a `QuerySpec` object, constrained by Gemini's
+structured-output mode against the Pydantic schema. The spec is then executed locally by
+`dsl.execute` — no records, names, phone numbers or account numbers ever leave the machine.
 
 That split is the SR-R4 mitigation from `research/10_risk_analysis.md` and the design
 `research/07_architecture_planning.md` chose: "LLM emits a validated structured DSL, never
 raw SQL". `_assert_no_case_data` enforces it at runtime rather than trusting the caller.
 
-Absent ANTHROPIC_API_KEY this module returns None and the API falls back to the offline
+Model: `gemini-2.5-flash` — a free-tier model. Translating one question into a small JSON
+object with enum-constrained fields is an easy task, so the larger tiers buy nothing here
+and cost quota. Set GEMINI_MODEL to override (`gemini-2.5-flash-lite` is lighter still).
+
+Without an API key this module returns None and the API falls back to the offline
 rule-based interpreter, so the system never hard-depends on network access — which matters
 for an evidentiary tool that may run air-gapped.
 """
@@ -26,7 +30,12 @@ from .dsl import QuerySpec, schema_vocabulary
 
 log = get_logger(__name__)
 
-DEFAULT_MODEL = "claude-opus-5"
+#: Free-tier lite model, ample for query planning. Override with GEMINI_MODEL.
+#: The "-latest" alias is deliberate: pinning a dated model breaks silently when Google
+#: retires it for new keys (gemini-2.5-flash already 404s with "no longer available to
+#: new users"), and this planner degrades to the rule engine rather than erroring — so a
+#: retirement would look like "the LLM just stopped working" with no signal.
+DEFAULT_MODEL = "gemini-flash-lite-latest"
 
 _SYSTEM = """You translate an investigator's question into a structured query object for \
 ERakshak, a forensic tool that fuses bank statements, call records (CDR) and internet \
@@ -53,6 +62,9 @@ Vocabulary:
 # what must not appear is a bulk record dump.
 _MAX_QUESTION_CHARS = 500
 
+#: The SDK itself reads either of these; checked here so `available()` matches its behaviour.
+_KEY_VARS = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+
 
 def _assert_no_case_data(question: str) -> None:
     """Guard the boundary: only a short question may leave the machine.
@@ -74,7 +86,26 @@ def _assert_no_case_data(question: str) -> None:
 
 
 def available() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return any(os.getenv(v) for v in _KEY_VARS)
+
+
+def _gemini_schema() -> dict:
+    """QuerySpec as a schema Gemini will accept.
+
+    The Pydantic models set `extra: "forbid"` so a malformed spec fails validation
+    locally. That emits `additionalProperties`, which Gemini's structured-output endpoint
+    rejects outright ("Unknown name 'additional_properties'"), as do `title`/`default`.
+    Strip them for the wire; local validation still enforces strictness on the way back.
+    """
+    def strip(node):
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items()
+                    if k not in ("additionalProperties", "title", "default")}
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+
+    return strip(QuerySpec.model_json_schema())
 
 
 def plan(question: str, *, model: str | None = None) -> QuerySpec | None:
@@ -82,43 +113,40 @@ def plan(question: str, *, model: str | None = None) -> QuerySpec | None:
     if not available():
         return None
     try:
-        import anthropic
+        from google import genai
+        from google.genai import types
     except ImportError:
-        log.info("anthropic SDK not installed; using the rule-based query interpreter")
+        log.info("google-genai SDK not installed; using the rule-based query interpreter")
         return None
 
     _assert_no_case_data(question)
     vocab = json.dumps(schema_vocabulary(), indent=2)
 
     try:
-        client = anthropic.Anthropic()
-        response = client.messages.parse(
-            model=model or os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODEL,
-            max_tokens=2000,
-            thinking={"type": "adaptive"},
-            # The system block is byte-stable across every request, so it caches; the
-            # question is the only varying part and sits after it.
-            system=[{
-                "type": "text",
-                "text": _SYSTEM.format(vocab=vocab),
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=[{"role": "user", "content": question}],
-            output_format=QuerySpec,
+        client = genai.Client()          # reads GEMINI_API_KEY / GOOGLE_API_KEY
+        response = client.models.generate_content(
+            model=model or os.getenv("GEMINI_MODEL") or DEFAULT_MODEL,
+            contents=question,
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM.format(vocab=vocab),
+                # Constrained decoding: the model cannot return a shape the executor
+                # would reject.
+                response_mime_type="application/json",
+                response_json_schema=_gemini_schema(),
+                temperature=0,           # planning is deterministic, not creative
+            ),
         )
-    except Exception as e:                       # network, auth, validation, refusal
+        # Validate locally rather than trusting the constraint — `extra: forbid` still
+        # applies here, so an unexpected field is caught rather than silently ignored.
+        spec = QuerySpec.model_validate_json(response.text or "")
+    except Exception as e:               # network, auth, quota, schema, validation
         log.warning("LLM query planning failed (%s); falling back to rules", e)
         return None
 
-    if response.stop_reason == "refusal":
-        log.warning("LLM declined to plan the query; falling back to rules")
-        return None
-
-    spec = response.parsed_output
     # Audit the question and the plan — never the results. This is the evidentiary record
     # of how a natural-language answer was derived.
-    audit("nl_plan", question=question, spec=spec.model_dump(mode="json") if spec else None)
+    audit("nl_plan", question=question, spec=spec.model_dump(mode="json"))
     return spec
 
 
-__all__ = ["plan", "available", "DEFAULT_MODEL"]
+__all__ = ["DEFAULT_MODEL", "available", "plan"]

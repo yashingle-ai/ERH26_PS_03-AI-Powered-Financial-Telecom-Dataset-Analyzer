@@ -506,8 +506,11 @@ Honest list — these are **not** bugs to report:
   `/v1/query` are implemented and typed in `frontend/src/lib/api.ts`, but no React screen
   calls them. Use Streamlit, `/docs`, or curl. The Streamlit **🧪 Quality** and **🗣️ Ask**
   tabs cover the same ground.
-- **NL query is rule-based, not an LLM.** Deliberate — deterministic and auditable for
-  evidentiary use. Unrecognised phrasings return guidance, not an error.
+- **NL query has two engines.** With `GEMINI_API_KEY` set, a question is translated into
+  a validated query object and executed locally; without it, the offline rule-based
+  interpreter handles the five canned phrasings. The model only ever receives the question
+  plus field names — never case records. Get a free key at
+  <https://aistudio.google.com/apikey>.
 - **Model persistence is opt-in.** Set `ERAKSHAK_PERSIST_MODEL=1` to write
   `data/models/`. Off by default so that browsing the app never rewrites a tracked
   artifact. Override the location with `ERAKSHAK_MODEL_DIR`.

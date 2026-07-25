@@ -20,6 +20,7 @@ Design constraints (research/07, SR-R4):
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from enum import Enum
@@ -187,6 +188,23 @@ def _num(v) -> float | None:
         return None
 
 
+#: Fields whose values are phone numbers, in one form or another.
+_PHONE_FIELDS = {Field_.PHONE, Field_.COUNTERPARTY}
+
+
+def _phone_key(value: Any) -> str | None:
+    """Last 10 digits, for comparing phone numbers written in different forms.
+
+    Normalization stores E.164 ("+919702000558"), but an analyst types the number the way
+    it appears in the case file ("9702000558"), and that is what a question carries. A
+    plain equality test therefore never matched and the query silently returned nothing —
+    the worst failure mode for a forensic tool. Comparing the subscriber-number suffix
+    makes "9702000558", "919702000558" and "+91 97020 00558" all match.
+    """
+    digits = re.sub(r"\D", "", str(value))
+    return digits[-10:] if len(digits) >= 10 else None
+
+
 def _matches(actual: Any, flt: Filter) -> bool:
     # A list-valued field (an entity's phones) matches if ANY element matches.
     if isinstance(actual, list):
@@ -195,6 +213,12 @@ def _matches(actual: Any, flt: Filter) -> bool:
         return False
 
     op, want, wants = flt.op, flt.value, flt.values or []
+
+    if flt.field in _PHONE_FIELDS and op in (Op.EQ, Op.NEQ, Op.CONTAINS):
+        a, w = _phone_key(actual), _phone_key(want)
+        if a and w:
+            return (a == w) if op is not Op.NEQ else (a != w)
+
     if op is Op.EQ:
         return str(actual).lower() == str(want).lower()
     if op is Op.NEQ:
@@ -282,13 +306,22 @@ def _shape_event(e: dict, entities: dict) -> dict:
     }
 
 
+#: Placeholders operators use for "no value". Grouping on them produces a meaningless
+#: bucket that outranks every real one — on the real CDR, "-" topped an IMEI grouping
+#: with 26,246 events, which reads as a finding and is not one.
+_NULL_MARKERS = {"", "-", "--", "n/a", "na", "null", "none", "nil", "0", "unknown"}
+
+
 def _grouped(rows: list[dict], spec: QuerySpec, getter) -> dict:
     buckets: dict[Any, list[dict]] = defaultdict(list)
+    dropped = 0
     for r in rows:
         key = getter(r, spec.group_by)
         for k in (key if isinstance(key, list) else [key]):
-            if k is not None:
-                buckets[k].append(r)
+            if k is None or str(k).strip().lower() in _NULL_MARKERS:
+                dropped += 1
+                continue
+            buckets[k].append(r)
 
     def score(items: list[dict]) -> float:
         if spec.aggregate is Aggregate.COUNT:
@@ -306,7 +339,11 @@ def _grouped(rows: list[dict], spec: QuerySpec, getter) -> dict:
                     key=lambda t: t[1], reverse=spec.order_desc)
     shaped = [{"key": str(k), spec.aggregate.value: round(s, 2), "events": n}
               for k, s, n in ranked[: spec.limit]]
-    return {"rows": shaped, "total": len(ranked), "truncated": len(ranked) > len(shaped)}
+    out = {"rows": shaped, "total": len(ranked), "truncated": len(ranked) > len(shaped)}
+    if dropped:
+        # Reported, never silent: the analyst must know the grouping ignored rows.
+        out["skipped_blank"] = dropped
+    return out
 
 
 def schema_vocabulary() -> dict:

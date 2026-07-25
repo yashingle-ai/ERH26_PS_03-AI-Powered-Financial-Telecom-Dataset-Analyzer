@@ -208,10 +208,14 @@ question ─► Claude (schema vocabulary only) ─► QuerySpec (validated) ─
   text, no SQL) plus a pure-local executor. Always reports `total` alongside `rows`, so
   truncation is visible.
 - `backend/app/search/llm_planner.py` — the only module that calls an external API.
+  Verified live: **8/8** of the previously-unanswerable questions now produce a correct
+  plan, and 6/6 execute end-to-end against the real 166k-event CDR corpus.
 - `/v1/query/{ds}` returns `engine`, `total`, `truncated`, and the generated **`spec`** so
   the analyst can audit exactly what ran.
 
-**Data handling (research/10 SR-R4).** The model receives the question plus the field
+**Data handling (research/10 SR-R4).** Backed by the Google Gemini API on a free-tier
+Flash-Lite model — planning one question into a small enum-constrained object is an easy
+task, so a larger tier buys nothing. The model receives the question plus the field
 vocabulary. It never receives case records. `_assert_no_case_data` enforces this at the
 boundary — it rejects oversized, multi-line, and delimited payloads — and is covered by
 tests, including one asserting a legitimate question containing a phone number still

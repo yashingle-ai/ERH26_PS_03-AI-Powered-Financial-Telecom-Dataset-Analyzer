@@ -51,13 +51,13 @@ def _txn(amount, entity="e1", hour=12):
 @pytest.fixture
 def inv():
     events = [
-        _call("+911", "+912", 3, imei="IMEI-A"),
-        _call("+911", "+912", 4, imei="IMEI-A"),
-        _call("+911", "+913", 14, imei="IMEI-B"),
+        _call("+919702000558", "+919876543210", 3, imei="IMEI-A"),
+        _call("+919702000558", "+919876543210", 4, imei="IMEI-A"),
+        _call("+919702000558", "+919123456789", 14, imei="IMEI-B"),
         _txn(500_000), _txn(50_000),
     ]
     entities = {
-        "e1": {"label": "Subject A", "identifiers": {("PHONE", "+911"), ("ACCOUNT_NO", "999")}},
+        "e1": {"label": "Subject A", "identifiers": {("PHONE", "+919702000558"), ("ACCOUNT_NO", "999")}},
     }
     risk = {
         "e1": {"entity_id": "e1", "label": "Subject A", "risk_score": 88.0,
@@ -79,7 +79,7 @@ def test_who_did_x_call_most_often(inv):
         aggregate=Aggregate.COUNT,
     )
     out = dsl.execute(spec, inv)
-    assert out["rows"][0]["key"] == "PHONE:+912"
+    assert out["rows"][0]["key"] == "PHONE:+919876543210"
     assert out["rows"][0]["count"] == 2
 
 
@@ -126,7 +126,7 @@ def test_entity_identifier_filter_matches_any_value(inv):
     """An entity holds several phones; filtering on one must match the entity."""
     spec = QuerySpec(
         target=Target.ENTITIES,
-        filters=[Filter(field=Field_.PHONE, op=Op.EQ, value="+911")],
+        filters=[Filter(field=Field_.PHONE, op=Op.EQ, value="+919702000558")],
     )
     assert dsl.execute(spec, inv)["total"] == 1
 
@@ -186,9 +186,27 @@ def test_guard_allows_a_real_question_containing_a_number():
 
 def test_planner_returns_none_without_api_key(monkeypatch):
     """Air-gapped deployments must fall back to rules, never fail."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
     assert llm_planner.available() is False
     assert llm_planner.plan("who did X call most often?") is None
+
+
+def test_planner_detects_either_gemini_key(monkeypatch):
+    """The SDK honours GEMINI_API_KEY and GOOGLE_API_KEY; availability must match."""
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    assert llm_planner.available() is True
+
+
+def test_queryspec_converts_to_a_gemini_schema():
+    """Structured output constrains decoding — if the schema will not convert, the
+    planner silently degrades to the rule engine on every call."""
+    from google.genai._transformers import t_schema
+
+    schema = t_schema(None, dsl.QuerySpec)
+    assert schema.properties and "target" in schema.properties
 
 
 def test_schema_vocabulary_is_static_and_data_free(inv):
@@ -209,5 +227,49 @@ def test_schema_vocabulary_is_static_and_data_free(inv):
     emitted = {v for values in vocab.values() for v in values}
     assert emitted <= known, f"vocabulary leaked non-schema values: {emitted - known}"
 
-    for secret in ("+911", "+912", "999", "Subject A", "IMEI-A"):
+    for secret in ("+919702000558", "+919876543210", "999", "Subject A", "IMEI-A"):
         assert secret not in flat
+
+
+# ── phone forms differ between the question and the data ──────────────────────
+
+def test_phone_filter_matches_across_formats(inv):
+    """Normalization stores E.164; an analyst types the number as it appears in the file.
+
+    Found only by running the planner live: the model emitted "9702000558" while the
+    pipeline held "+919702000558", so equality never matched and the query returned
+    nothing — silently, which is the worst outcome for a forensic tool.
+    """
+    for typed in ("+919702000558", "9702000558", "919702000558", "+91 97020 00558"):
+        spec = QuerySpec(
+            target=Target.ENTITIES,
+            filters=[Filter(field=Field_.PHONE, op=Op.EQ, value=typed)],
+        )
+        assert dsl.execute(spec, inv)["total"] == 1, f"failed for {typed!r}"
+
+
+def test_counterparty_filter_matches_across_formats(inv):
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.COUNTERPARTY, op=Op.EQ, value="9876543210")],
+    )
+    assert dsl.execute(spec, inv)["total"] == 2
+
+
+# ── blank placeholders must not win a grouping ────────────────────────────────
+
+def test_grouping_skips_null_placeholders():
+    """Operator exports use "-" for missing values; on the real CDR that bucket topped
+    an IMEI grouping with 26,246 events, reading as a finding when it is the opposite."""
+    events = [
+        {"event_type": "CALL", "timestamp_start": datetime(2024, 8, 1, 1, tzinfo=IST),
+         "primary": ("PHONE", "+919702000558"), "counterparty": None, "entity_id": "e1",
+         "amount": None, "direction": None, "attributes": {"imei": marker},
+         "provenance": {}}
+        for marker in ("-", "N/A", "", "IMEI-REAL")
+    ]
+    out = dsl.execute(QuerySpec(target=Target.EVENTS, group_by=Field_.IMEI),
+                      _Inv(events, {}, {}))
+
+    assert [r["key"] for r in out["rows"]] == ["IMEI-REAL"]
+    assert out["skipped_blank"] == 3
