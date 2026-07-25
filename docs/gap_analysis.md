@@ -1,5 +1,12 @@
 # Gap & Edge-Case Analysis vs Problem Statement (ERH26_PS_03)
 
+> **⚠️ SUPERSEDED — see [`GAP_ANALYSIS_REAL_DATA.md`](GAP_ANALYSIS_REAL_DATA.md).**
+> The v1.4.0 status below overstates completion: several items marked DONE were
+> verified broken against the real case data (`.xls` support was documented but
+> `xlrd` was never a dependency; `._` sidecars were not skipped; vendor formats
+> fell through). Kept for history; do not use as a status source.
+
+
 Assessed against the real case data (FIR 65-2024, FIR-0006-2025 U) and the PS requirements.
 Severity: 🔴 correctness/evidentiary · 🟠 functional gap · 🟡 robustness/quality · 🔵 bonus/nice-to-have.
 

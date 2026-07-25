@@ -21,6 +21,18 @@ def _entity_label(data, eid):
     return (data["entities"].get(eid, {}) or {}).get("label", eid)
 
 
+def _result(explanation: str, rows: list | None, total: int | None = None) -> dict:
+    """Uniform shape shared with the DSL engine.
+
+    `total` is the real match count; `rows` is capped at 200 by every intent. Reporting
+    both makes the truncation visible instead of silently returning a partial answer.
+    """
+    n = len(rows) if rows is not None else 0
+    total = n if total is None else total
+    return {"explanation": explanation, "rows": rows,
+            "total": total, "truncated": total > n}
+
+
 def answer(query: str, data: dict) -> dict:
     q = (query or "").lower().strip()
 
@@ -30,7 +42,7 @@ def answer(query: str, data: dict) -> dict:
         rows = [{"entity": h["entity_label"], "when": h["transaction"]["time"],
                  "amount": h["transaction"].get("amount"), "why": h["explanation"][:90]}
                 for h in hits[:200]]
-        return {"explanation": f"{len(hits)} call+IP+transfer coincidence(s).", "rows": rows}
+        return _result(f"{len(hits)} call+IP+transfer coincidence(s).", rows, len(hits))
 
     # risk-band intent
     m = re.search(r"\b(high|medium|low)\b.*risk|risk.*\b(high|medium|low)\b", q)
@@ -41,7 +53,7 @@ def answer(query: str, data: dict) -> dict:
         rows = [{"entity": r["label"], "risk": r["risk_score"],
                  "flags": ", ".join(sorted({f["rule"] for f in r["rule_flags"]}))}
                 for r in ents[:200]]
-        return {"explanation": f"{len(ents)} {band}-risk entities.", "rows": rows}
+        return _result(f"{len(ents)} {band}-risk entities.", rows, len(ents))
 
     # amount threshold intent
     m = re.search(r"(?:over|above|greater than|>)\s*₹?\s*([\d,]+)", q)
@@ -54,7 +66,7 @@ def answer(query: str, data: dict) -> dict:
                  "to": _entity_label(data, e.get("counterparty_entity_id")),
                  "amount": e.get("amount"), "when": str(e.get("timestamp_start"))}
                 for e in txns[:200]]
-        return {"explanation": f"{len(txns)} transactions ≥ {thr:g}.", "rows": rows}
+        return _result(f"{len(txns)} transactions ≥ {thr:g}.", rows, len(txns))
 
     # calls to/from a number
     m = re.search(r"calls?\s+(?:to|from|with|of)\s+\+?(\d[\d ]{6,})", q)
@@ -65,7 +77,7 @@ def answer(query: str, data: dict) -> dict:
         rows = [{"a": str(e.get("primary")), "b": str(e.get("counterparty")),
                  "when": str(e.get("timestamp_start")),
                  "dur": (e.get("attributes") or {}).get("duration")} for e in calls[:200]]
-        return {"explanation": f"{len(calls)} calls involving {num}.", "rows": rows}
+        return _result(f"{len(calls)} calls involving {num}.", rows, len(calls))
 
     # events on a date
     m = re.search(r"(\d{4}-\d{2}-\d{2})", q)
@@ -75,8 +87,8 @@ def answer(query: str, data: dict) -> dict:
         rows = [{"type": e["event_type"], "entity": _entity_label(data, e.get("entity_id")),
                  "amount": e.get("amount"), "when": str(e.get("timestamp_start"))}
                 for e in evs[:200]]
-        return {"explanation": f"{len(evs)} events on {day}.", "rows": rows}
+        return _result(f"{len(evs)} events on {day}.", rows, len(evs))
 
-    return {"explanation": "Sorry, I couldn't parse that. Try: 'transfers over 100000', "
-                           "'calls to 9099102222', 'events on 2024-08-01', "
-                           "'high risk entities'.", "rows": None}
+    return _result("Sorry, I couldn't parse that. Try: 'transfers over 100000', "
+                   "'calls to 9099102222', 'events on 2024-08-01', "
+                   "'high risk entities'.", None)

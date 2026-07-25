@@ -183,3 +183,140 @@ def test_every_profile_gate_is_reachable_from_its_own_aliases():
             if unknown:
                 problems.append((prof["profile"]["id"], unknown))
     assert not problems, f"required_any entries not present in any alias list: {problems}"
+
+
+# ── Archives: evidence sealed inside (nested) ZIPs ─────────────────────────────
+# On the real case, 92 archives were never opened — 83 structured files plus 129 PDFs
+# sat inside them, and nothing reported the omission.
+
+def _zip_with(tmp_path, name, entries):
+    import zipfile
+    p = tmp_path / name
+    with zipfile.ZipFile(p, "w") as zf:
+        for member, body in entries.items():
+            zf.writestr(member, body)
+    return p
+
+
+def test_archive_members_are_parsed(tmp_path):
+    _zip_with(tmp_path, "bank.zip", {"stmt.csv": "Amount,Date\n10,01-08-2024\n"})
+    parsed = ing.parse_directory(str(tmp_path), include_pdf=False)
+    assert [p.records[0]["Amount"] for p in parsed if p.records] == ["10"]
+
+
+def test_archive_provenance_names_the_container(tmp_path):
+    """A statement pulled out of bank.zip must still cite the exhibit it came from."""
+    _zip_with(tmp_path, "bank.zip", {"stmt.csv": "Amount,Date\n10,01-08-2024\n"})
+    parsed = [p for p in ing.parse_directory(str(tmp_path), include_pdf=False) if p.records]
+
+    assert parsed[0].container == "bank.zip"
+    assert parsed[0].records[0]["_provenance"]["source_file"] == "bank.zip → stmt.csv"
+
+
+def test_nested_archives_are_expanded(tmp_path):
+    import io
+    import zipfile
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("deep.csv", "Amount,Date\n99,01-08-2024\n")
+    _zip_with(tmp_path, "outer.zip", {"inner.zip": inner.getvalue()})
+
+    parsed = [p for p in ing.parse_directory(str(tmp_path), include_pdf=False) if p.records]
+    assert parsed and parsed[0].records[0]["Amount"] == "99"
+
+
+def test_archive_skips_macos_noise(tmp_path):
+    _zip_with(tmp_path, "a.zip", {
+        "real.csv": "Amount,Date\n10,01-08-2024\n",
+        "__MACOSX/._real.csv": "\x00\x05\x16\x07",
+        "._real.csv": "\x00\x05\x16\x07",
+    })
+    parsed = ing.parse_directory(str(tmp_path), include_pdf=False)
+    assert len(parsed) == 1
+
+
+def test_archive_refuses_path_traversal(tmp_path):
+    """A crafted member must not be written outside the extraction directory."""
+    from backend.app.ingestion.parsers import archive
+
+    _zip_with(tmp_path, "evil.zip", {"../escaped.csv": "Amount\n1\n"})
+    dest = tmp_path / "out"
+    extracted = archive.extract_archive(str(tmp_path / "evil.zip"), dest,
+                                        max_total_bytes=1 << 20)
+
+    assert extracted == []
+    assert not (tmp_path / "escaped.csv").exists()
+
+
+def test_archive_respects_expansion_budget(tmp_path):
+    """A zip bomb must stop at the budget rather than filling the disk."""
+    from backend.app.ingestion.parsers import archive
+
+    _zip_with(tmp_path, "big.zip", {"a.csv": "x" * 5000, "b.csv": "y" * 5000})
+    extracted = archive.extract_archive(str(tmp_path / "big.zip"), tmp_path / "o",
+                                        max_total_bytes=6000)
+    assert len(extracted) == 1  # first fits, second exceeds the remaining budget
+
+
+def test_encrypted_archive_does_not_abort_the_batch(tmp_path):
+    """Operators send password-protected archives; zipfile raises a bare RuntimeError.
+
+    One locked member must not lose the rest of the archive — and must never abort the
+    whole case, which is what happened before this was handled per-member.
+    """
+    import zipfile
+
+    from backend.app.ingestion.parsers import archive
+
+    p = tmp_path / "locked.zip"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("open.csv", "Amount\n1\n")
+    # Mark one member encrypted without a real password (flag bit 0x1).
+    with zipfile.ZipFile(p, "a") as zf:
+        zf.writestr("secret.csv", "Amount\n2\n")
+    with zipfile.ZipFile(p, "a") as zf:
+        zf.infolist()[-1].flag_bits |= 0x1
+
+    extracted = archive.extract_archive(str(p), tmp_path / "o", max_total_bytes=1 << 20)
+    assert any(f.name == "open.csv" for f in extracted)
+
+
+# ── Word documents hold many tables, not one ───────────────────────────────────
+
+def _docx_with_tables(path, tables):
+    from docx import Document
+    doc = Document()
+    for rows in tables:
+        t = doc.add_table(rows=len(rows), cols=len(rows[0]))
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row):
+                t.cell(r, c).text = val
+    doc.save(path)
+
+
+def test_read_all_grids_returns_every_table(tmp_path):
+    from backend.app.ingestion.parsers import docx_tables
+
+    p = tmp_path / "ca_report.docx"
+    _docx_with_tables(p, [
+        [["Account Number", "IFSC"], ["111", "AAA"]],
+        [["Account Number", "IFSC"], ["222", "BBB"]],
+        [["Account Number", "IFSC"], ["333", "CCC"]],
+    ])
+    grids = docx_tables.read_all_grids(str(p))
+    assert len(grids) == 3
+
+
+def test_multi_table_docx_yields_one_parsedfile_per_table(tmp_path):
+    """Keeping only the largest table discarded 2,540 of 5,430 real rows."""
+    p = tmp_path / "ca_report.docx"
+    _docx_with_tables(p, [
+        [["Account Number", "IFSC"], ["111", "AAA"]],
+        [["Account Number", "IFSC"], ["222", "BBB"]],
+    ])
+    parsed = ing.parse_file_multi(str(p))
+
+    assert len(parsed) == 2
+    assert [pf.table_index for pf in parsed] == [1, 2]
+    values = sorted(r["Account Number"] for pf in parsed for r in pf.records)
+    assert values == ["111", "222"]

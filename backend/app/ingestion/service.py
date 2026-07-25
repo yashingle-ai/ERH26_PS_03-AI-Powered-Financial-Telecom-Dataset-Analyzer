@@ -8,13 +8,15 @@ log. Normalization/entity-resolution (Phase 2) consumes this.
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core import config
 from ..core.logging_config import get_logger
 from . import detector
-from .parsers import docx_tables, excel, pdf, tabular
+from .parsers import archive, docx_tables, excel, pdf, tabular
 
 log = get_logger(__name__)
 
@@ -31,12 +33,18 @@ class ParsedFile:
     records: list[dict] = field(default_factory=list)
     header_identity: dict = field(default_factory=dict)
     rejects: list[dict] = field(default_factory=list)
+    #: Name of the archive this file was extracted from, if any (evidentiary chain).
+    container: str | None = None
+    #: Table index within a multi-table source (Word documents hold many).
+    table_index: int = 0
 
     @property
     def summary(self) -> dict:
         return {
             "file": Path(self.path).name,
             "path": self.path,
+            "container": self.container,
+            "table_index": self.table_index,
             "format": self.format,
             "source_type": self.source_type,
             "profile": self.profile_id,
@@ -226,12 +234,7 @@ def parse_file(path: str) -> ParsedFile:
             grid = docx_tables.read_grid(path) or [[]]
         else:
             text_lines, grid = pdf.read(path)
-        header_idx = _find_header_row(grid)
-        headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]])
-        det = detector.detect_profile(headers)
-        base_prov = {"source_file": Path(path).name, "format": fmt}
-        records, rejects = _records_from_grid(grid, header_idx, base_prov, headers)
-        identity = _extract_identity(grid[:header_idx], text_lines)
+        return _parsed_from_grid(path, fmt, grid, text_lines)
 
     profile = det.get("profile") or {}
     return ParsedFile(
@@ -244,15 +247,107 @@ def parse_file(path: str) -> ParsedFile:
     )
 
 
+def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[str],
+                      table_index: int = 0) -> ParsedFile:
+    header_idx = _find_header_row(grid)
+    headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]]) if grid else []
+    det = detector.detect_profile(headers)
+    base_prov = {"source_file": Path(path).name, "format": fmt}
+    if table_index:
+        base_prov["table"] = table_index
+    records, rejects = _records_from_grid(grid, header_idx, base_prov, headers) if grid else ([], [])
+    identity = _extract_identity(grid[:header_idx], text_lines)
+    profile = det.get("profile") or {}
+    return ParsedFile(
+        path=path, format=fmt,
+        source_type=det.get("source"),
+        profile_id=profile.get("profile", {}).get("id"),
+        confidence=det.get("confidence", 0.0),
+        needs_manual_mapping=det.get("needs_manual_mapping", True),
+        headers=headers, records=records, header_identity=identity, rejects=rejects,
+        table_index=table_index,
+    )
+
+
+def parse_file_multi(path: str) -> list[ParsedFile]:
+    """Parse a file into one ParsedFile per mappable table.
+
+    Only Word differs from `parse_file`: a case .docx commonly holds dozens of small
+    tables (one per account or subject), and each needs its own profile match — a single
+    grid per document silently dropped 47% of the table rows in the real case data.
+    Every other format yields exactly one.
+    """
+    if detector.detect_format(path) != "docx":
+        return [parse_file(path)]
+
+    grids = docx_tables.read_all_grids(path)
+    if not grids:
+        return [parse_file(path)]
+    return [
+        _parsed_from_grid(path, "docx", grid, [], table_index=i + 1)
+        for i, (_label, grid) in enumerate(grids)
+    ]
+
+
+def _parse_one(p: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
+               origin: str | None = None) -> None:
+    """Parse a single file into `out`. `origin` names the archive it came from, if any."""
+    if p.suffix.lower() == ".pdf":
+        # PDFs in real cases are mostly narrative/scanned (slow, no structured
+        # tables). Opt-in, and skip huge ones even when enabled.
+        if not include_pdf:
+            return
+        if p.stat().st_size > pdf_cap:
+            log.info("skipping large PDF (%.1fMB > %.0fMB cap): %s",
+                     p.stat().st_size / 1e6, config.max_pdf_mb(), p.name)
+            return
+    try:
+        parsed = parse_file_multi(str(p))
+    except Exception as e:  # per-file failure never aborts the batch (Doc 04)
+        log.warning("failed to parse %s: %s", p.name, e)
+        parsed = [ParsedFile(
+            path=str(p), format=p.suffix.lstrip("."), source_type=None,
+            profile_id=None, confidence=0.0, needs_manual_mapping=True,
+            headers=[], records=[], header_identity={},
+            rejects=[{"error": str(e), "file": p.name}],
+        )]
+    for pf in parsed:
+        if origin:
+            # Keep the evidentiary chain intact: a statement pulled out of bank.zip must
+            # cite "bank.zip → statement.csv", not a temp path nobody can trace back to
+            # the exhibit.
+            pf.container = origin
+            for rec in pf.records:
+                prov = rec.get("_provenance")
+                if isinstance(prov, dict):
+                    prov["container"] = origin
+                    prov["source_file"] = f"{origin} → {prov.get('source_file', p.name)}"
+        out.append(pf)
+
+
 def parse_directory(root: str, include_pdf: bool = True) -> list[ParsedFile]:
     """Parse every supported file under a directory tree (bank/, cdr/, ipdr/).
 
     `include_pdf=False` skips PDFs entirely — use for large real-case folders where the
     structured data is in CSV/XLSX and PDFs are narrative/scanned.
+
+    ZIP archives are expanded into a scratch directory and their contents parsed too — on
+    real cases most structured evidence arrives sealed inside (often nested) archives.
     """
-    out = []
+    out: list[ParsedFile] = []
     pdf_cap = config.max_pdf_mb() * 1024 * 1024
-    for p in sorted(Path(root).rglob("*")):
+    archive_budget = int(config.max_archive_mb() * 1024 * 1024)
+    scratch = Path(tempfile.mkdtemp(prefix="erakshak-archives-"))
+    try:
+        _walk(Path(root), out, pdf_cap, include_pdf, archive_budget, scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return out
+
+
+def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
+          archive_budget: int, scratch: Path) -> None:
+    for p in sorted(root.rglob("*")):
         if p.name.startswith("~$"):        # Office lock/temp files
             continue
         # macOS writes an AppleDouble sidecar ("._name") beside every file, and a
@@ -262,24 +357,19 @@ def parse_directory(root: str, include_pdf: bool = True) -> list[ParsedFile]:
         # per-file parse failures — noise that hides genuine ingestion problems.
         if p.name.startswith("._") or "__MACOSX" in p.parts:
             continue
-        if p.suffix.lower() in detector.FORMAT_BY_EXT and p.is_file():
-            if p.suffix.lower() == ".pdf":
-                # PDFs in real cases are mostly narrative/scanned (slow, no structured
-                # tables). Opt-in, and skip huge ones even when enabled.
-                if not include_pdf:
-                    continue
-                if p.stat().st_size > pdf_cap:
-                    log.info("skipping large PDF (%.1fMB > %.0fMB cap): %s",
-                             p.stat().st_size / 1e6, config.max_pdf_mb(), p.name)
-                    continue
-            try:
-                out.append(parse_file(str(p)))
-            except Exception as e:  # per-file failure never aborts the batch (Doc 04)
-                log.warning("failed to parse %s: %s", p.name, e)
-                out.append(ParsedFile(
-                    path=str(p), format=p.suffix.lstrip("."), source_type=None,
-                    profile_id=None, confidence=0.0, needs_manual_mapping=True,
-                    headers=[], records=[], header_identity={},
-                    rejects=[{"error": str(e), "file": p.name}],
-                ))
-    return out
+        if not p.is_file():
+            continue
+
+        if p.suffix.lower() == ".zip":
+            dest = scratch / f"{p.stem}-{abs(hash(str(p))) & 0xFFFFFF:06x}"
+            for member in archive.extract_archive(
+                str(p), dest,
+                max_total_bytes=archive_budget,
+                max_depth=config.max_archive_depth(),
+            ):
+                if member.suffix.lower() in detector.FORMAT_BY_EXT:
+                    _parse_one(member, out, pdf_cap, include_pdf, origin=p.name)
+            continue
+
+        if p.suffix.lower() in detector.FORMAT_BY_EXT:
+            _parse_one(p, out, pdf_cap, include_pdf)

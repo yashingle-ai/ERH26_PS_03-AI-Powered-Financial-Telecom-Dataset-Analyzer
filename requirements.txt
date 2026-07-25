@@ -38,6 +38,9 @@ streamlit==1.59.0
 plotly==6.8.0
 matplotlib==3.11.0
 
+# --- Optional AI (natural-language query -> validated DSL; never sees case data) ---
+anthropic==0.116.0
+
 # --- Dev / test ---
 pytest==9.1.1
 httpx==0.28.1

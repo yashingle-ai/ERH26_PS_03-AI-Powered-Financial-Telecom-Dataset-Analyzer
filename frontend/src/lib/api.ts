@@ -219,12 +219,34 @@ export type SuggestionsResponse = {
   threshold: number;
 };
 
-/** Rule-based NL query result (F1). `rows` is null when the query wasn't understood. */
+/**
+ * A validated, locally-executed query plan (F1). Present only on the "llm" engine —
+ * it is the audit trail for how a natural-language answer was derived, and should be
+ * surfaced to the analyst rather than hidden.
+ */
+export type QuerySpec = {
+  target: "events" | "entities" | "correlations";
+  filters: { field: string; op: string; value?: unknown; values?: unknown[] }[];
+  group_by?: string | null;
+  aggregate: string;
+  order_desc: boolean;
+  limit: number;
+  explanation: string;
+};
+
+/** NL query result (F1). `rows` is null when the query wasn't understood. */
 export type NlQueryResponse = {
   query: string;
+  /** "llm" = question translated to a validated spec, run locally. "rules" = offline. */
+  engine: "llm" | "rules";
   explanation: string;
   rows: Record<string, unknown>[] | null;
+  /** Rows actually returned (capped by `limit`). */
   matched: number;
+  /** True match count — differs from `matched` when the result was capped. */
+  total: number;
+  truncated: boolean;
+  spec: QuerySpec | null;
 };
 
 export const api = {
@@ -300,11 +322,11 @@ export const api = {
     return request<SuggestionsResponse>(`/v1/suggestions/${encodeURIComponent(dataset)}?${q}`);
   },
 
-  query(dataset: string, q: string, windowMinutes = 10) {
+  query(dataset: string, q: string, windowMinutes = 10, engine?: "llm" | "rules") {
     return request<NlQueryResponse>(`/v1/query/${encodeURIComponent(dataset)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q, window_minutes: windowMinutes }),
+      body: JSON.stringify({ q, window_minutes: windowMinutes, engine }),
     });
   },
 };

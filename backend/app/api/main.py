@@ -317,29 +317,61 @@ def link_suggestions(ds: str, window: int = 10,
     return {"total": len(rows), "items": rows, "threshold": threshold}
 
 
-# ---- natural-language query (F1) — rule-based, offline, auditable -----------
+# ---- natural-language query (F1) -------------------------------------------
+# Two engines. "llm" translates the question into a validated QuerySpec (the LLM sees only
+# the field vocabulary, never case data) and executes it locally. "rules" is the offline
+# interpreter, used when no API key is configured or the question can't be planned — so
+# the endpoint keeps working air-gapped.
 class QueryRequest(BaseModel):
     q: str
     window_minutes: int = 10
+    engine: str | None = None          # "llm" | "rules"; default: llm when available
 
 
 @v1.post("/query/{ds}")
 def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst"))):
-    from backend.app.search import nl_query
+    from backend.app.search import dsl, llm_planner, nl_query
 
     inv = _analyze(ds, req.window_minutes)
+
+    if req.engine != "rules":
+        try:
+            spec = llm_planner.plan(req.q)
+        except ValueError as e:        # the outbound-payload guard tripped
+            raise HTTPException(400, str(e)) from e
+        if spec is not None:
+            out = dsl.execute(spec, inv)
+            audit("nl_query", user=user["username"], dataset=ds, q=req.q, engine="llm")
+            return {
+                "query": req.q,
+                "engine": "llm",
+                "explanation": spec.explanation or "Structured query executed locally.",
+                "rows": out["rows"],
+                "matched": len(out["rows"]),
+                "total": out["total"],
+                "truncated": out["truncated"],
+                # The generated plan is part of the evidentiary record: an analyst must be
+                # able to see exactly what was run, not just the answer.
+                "spec": spec.model_dump(mode="json"),
+            }
+
     result = nl_query.answer(req.q, {
         "entities": inv.entities,
         "risk": inv.risk,
         "events": inv.events,
         "correlation_hits": inv.correlation_hits,
     })
-    audit("nl_query", user=user["username"], dataset=ds, q=req.q)
+    rows = result.get("rows")
+    audit("nl_query", user=user["username"], dataset=ds, q=req.q, engine="rules")
     return {
         "query": req.q,
+        "engine": "rules",
         "explanation": result["explanation"],
-        "rows": result.get("rows"),
-        "matched": len(result["rows"]) if result.get("rows") is not None else 0,
+        "rows": rows,
+        "matched": len(rows) if rows is not None else 0,
+        "total": result.get("total", len(rows) if rows is not None else 0),
+        "truncated": bool(result.get("truncated")),
+        "spec": None,
     }
 
 

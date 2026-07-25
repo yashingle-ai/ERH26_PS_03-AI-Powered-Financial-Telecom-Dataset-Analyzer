@@ -62,6 +62,15 @@ def max_pdf_mb() -> float:
     return float(settings().get("ingestion", {}).get("max_pdf_mb", 6))
 
 
+def max_archive_mb() -> float:
+    """Uncompressed expansion budget per top-level archive, shared with its nested ones."""
+    return float(settings().get("ingestion", {}).get("max_archive_mb", 512))
+
+
+def max_archive_depth() -> int:
+    return int(settings().get("ingestion", {}).get("max_archive_depth", 3))
+
+
 def max_preamble_rows() -> int:
     return int(settings().get("ingestion", {}).get("max_preamble_rows", 30))
 
