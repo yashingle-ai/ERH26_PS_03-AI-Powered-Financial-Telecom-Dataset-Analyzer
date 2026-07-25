@@ -1,0 +1,52 @@
+# TSP short-form CDR export (real FIR case data).
+#
+# Same content as the LEA/Vodafone formats but with abbreviated column names
+# ("Target No" / "B Party No" / "Dur(s)") and the timestamp split across separate
+# Date and Time columns. Without this profile these files matched cdr_generic at
+# 0.33 confidence, which has no alias for "Target No" and expects a single datetime
+# column — so entity_phone and the timestamp both resolved to None and every row was
+# rejected for a "missing timestamp / primary identifier".
+profile:
+  id: cdr_tsp_short
+  source: CDR
+  event_type: CALL
+  match:
+    required_any: ["Target No", "B Party No"]
+    required_all: []
+field_map:
+  entity_phone:
+    aliases: ["Target No", "Target Number", "A Party No"]
+    type: phone
+  counterparty_phone:
+    aliases: ["B Party No", "B Party Number"]
+    type: phone
+  direction:
+    aliases: ["Call Type", "CALL_TYPE"]
+    type: string
+  date_col:
+    aliases: ["Date", "Call Date"]
+    type: date
+  time_col:
+    aliases: ["Time", "Call Time"]
+    type: time
+  attributes.duration:
+    aliases: ["Dur(s)", "Dur (s)", "Duration"]
+    type: int
+  imei:
+    aliases: ["IMEI"]
+    type: string
+  imsi:
+    aliases: ["IMSI"]
+    type: string
+  attributes.cell_id:
+    aliases: ["First CGI", "First Cell Global Id"]
+    type: string
+  attributes.location:
+    aliases: ["First CGI Lat/Long", "First BTS Location"]
+    type: string
+  attributes.circle:
+    aliases: ["Roam Nw", "Roaming Network/Circle"]
+    type: string
+  attributes.service_type:
+    aliases: ["Service Type", "TOC"]
+    type: string

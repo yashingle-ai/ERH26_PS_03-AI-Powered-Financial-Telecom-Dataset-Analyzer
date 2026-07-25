@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -263,9 +263,14 @@ def entities(ds: str, window: int = 10, limit: int = Query(50, le=500), offset: 
 def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: int = 0,
            event_type: str | None = None, user=Depends(require_role("analyst"))):
     inv = _analyze(ds, window)
+    # Event timestamps are timezone-aware (normalization canonicalises every source),
+    # so the fallback must be aware too — sorting an aware datetime against a naive
+    # datetime.min raises TypeError and turns this endpoint into a 500. Normalization
+    # currently rejects rows without a timestamp, but that is not this endpoint's
+    # invariant to rely on.
     rows = sorted(
         inv.events,
-        key=lambda e: e.get("timestamp_start") or datetime.min,
+        key=lambda e: e.get("timestamp_start") or datetime.min.replace(tzinfo=UTC),
     )
     if event_type:
         want = event_type.upper()

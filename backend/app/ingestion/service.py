@@ -60,10 +60,10 @@ def _all_header_tokens() -> set[str]:
 def _best_sheet(sheets: list[tuple[str, list[list]]]) -> list[list]:
     """Pick the sheet most likely to hold the data: best header-token match, else largest."""
     best, best_score = None, (-1, -1)
+    tokens = _all_header_tokens()  # hoisted: rebuilding this per sheet re-walks every profile
     for _name, grid in sheets:
         hi = _find_header_row(grid)
         header = [str(c).strip().lower() for c in grid[hi]] if hi < len(grid) else []
-        tokens = _all_header_tokens()
         score = (sum(1 for c in header if c in tokens), len(grid))
         if score > best_score:
             best_score, best = score, grid
@@ -140,8 +140,32 @@ def _extract_identity(rows_above: list[list], text_lines: list[str]) -> dict:
     return identity
 
 
-def _records_from_grid(grid: list[list], header_idx: int, base_prov: dict) -> tuple[list[dict], list[dict]]:
-    headers = [str(c).strip() for c in grid[header_idx]]
+def _dedupe_headers(headers: list[str]) -> list[str]:
+    """Make header names unique so later columns don't overwrite earlier ones.
+
+    A record is built as {header: cell}, so two columns sharing a name (common in real
+    exports, which repeat a label or leave it blank) silently discard the first one's
+    data. Repeats become "Name__2", "Name__3", …; blanks become "column_<i>" so they
+    stay addressable. Profile matching is unaffected — it looks up known aliases, and
+    the first occurrence keeps its original name.
+    """
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for i, h in enumerate(headers):
+        name = h or f"column_{i}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}__{seen[name]}"
+        else:
+            seen[name] = 1
+        out.append(name)
+    return out
+
+
+def _records_from_grid(grid: list[list], header_idx: int, base_prov: dict,
+                       headers: list[str] | None = None) -> tuple[list[dict], list[dict]]:
+    if headers is None:
+        headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]])
     records, rejects = [], []
     for r, row in enumerate(grid[header_idx + 1:], start=header_idx + 1):
         cells = [str(c).strip() for c in row]
@@ -164,7 +188,10 @@ def parse_file(path: str) -> ParsedFile:
         preview = tabular.read_lines(path, config.max_preamble_rows())
         header_row = _find_csv_header_row(preview)
         df = tabular.read(path, skiprows=header_row)
-        headers = [str(c).strip() for c in df.columns]
+        # pandas already disambiguates repeated CSV columns ("Name.1"), but stripping
+        # whitespace here can collide them again — and a duplicate label makes row[c]
+        # return a Series instead of a value, which breaks every downstream consumer.
+        headers = _dedupe_headers([str(c).strip() for c in df.columns])
         df.columns = headers
         cap = config.max_rows_per_file()
         if len(df) > cap:                      # G1: cap + log (no silent truncation)
@@ -200,10 +227,10 @@ def parse_file(path: str) -> ParsedFile:
         else:
             text_lines, grid = pdf.read(path)
         header_idx = _find_header_row(grid)
-        headers = [str(c).strip() for c in grid[header_idx]]
+        headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]])
         det = detector.detect_profile(headers)
         base_prov = {"source_file": Path(path).name, "format": fmt}
-        records, rejects = _records_from_grid(grid, header_idx, base_prov)
+        records, rejects = _records_from_grid(grid, header_idx, base_prov, headers)
         identity = _extract_identity(grid[:header_idx], text_lines)
 
     profile = det.get("profile") or {}
@@ -226,7 +253,14 @@ def parse_directory(root: str, include_pdf: bool = True) -> list[ParsedFile]:
     out = []
     pdf_cap = config.max_pdf_mb() * 1024 * 1024
     for p in sorted(Path(root).rglob("*")):
-        if p.name.startswith("~$"):        # skip Office lock/temp files
+        if p.name.startswith("~$"):        # Office lock/temp files
+            continue
+        # macOS writes an AppleDouble sidecar ("._name") beside every file, and a
+        # __MACOSX/ mirror inside archives, when copying to a non-HFS volume. Evidence
+        # handed over on a Mac-formatted drive is full of them. They carry no data but
+        # share the real file's extension, so they were being parsed and counted as
+        # per-file parse failures — noise that hides genuine ingestion problems.
+        if p.name.startswith("._") or "__MACOSX" in p.parts:
             continue
         if p.suffix.lower() in detector.FORMAT_BY_EXT and p.is_file():
             if p.suffix.lower() == ".pdf":

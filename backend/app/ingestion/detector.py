@@ -17,12 +17,63 @@ FORMAT_BY_EXT = {
     ".docx": "docx",
 }
 
+# Leading bytes that identify a container regardless of what the file is named.
+_MAGIC_ZIP = b"PK\x03\x04"      # xlsx / docx (both are ZIP)
+_MAGIC_OLE2 = b"\xd0\xcf\x11\xe0"  # legacy .xls / .doc
+_MAGIC_PDF = b"%PDF"
+# AppleDouble sidecar ("._name") written when copying from macOS to a non-HFS volume.
+_MAGIC_APPLEDOUBLE = b"\x00\x05\x16\x07"
+
+
+def sniff_container(path: str) -> str | None:
+    """Identify a file by its leading bytes: 'zip' | 'ole2' | 'pdf' | 'appledouble' | 'text'.
+
+    Returns None if the file can't be read. Extensions lie constantly in real case
+    material — evidence arrives as .xls that is really xlsx, .xlsx that is really an
+    AppleDouble stub, and .xls that is really a fixed-width text report — so the bytes
+    decide the parser and the extension only breaks ties.
+    """
+    try:
+        with Path(path).open("rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return None
+    if head.startswith(_MAGIC_ZIP):
+        return "zip"
+    if head.startswith(_MAGIC_OLE2):
+        return "ole2"
+    if head.startswith(_MAGIC_PDF):
+        return "pdf"
+    if head.startswith(_MAGIC_APPLEDOUBLE):
+        return "appledouble"
+    return "text"
+
 
 def detect_format(path: str) -> str:
     ext = Path(path).suffix.lower()
     if ext not in FORMAT_BY_EXT:
         raise ValueError(f"Unsupported file format: {ext}")
-    return FORMAT_BY_EXT[ext]
+
+    by_ext = FORMAT_BY_EXT[ext]
+    kind = sniff_container(path)
+    if kind is None:
+        return by_ext
+
+    if kind == "appledouble":
+        raise ValueError("AppleDouble resource fork, not a data file")
+    if kind == "pdf":
+        return "pdf"
+    if kind == "zip":
+        # Both xlsx and docx are ZIP archives; only the extension separates them.
+        return "docx" if ext == ".docx" else "xlsx"
+    if kind == "ole2":
+        # Legacy Excel — pandas dispatches to xlrd. A legacy .doc also lands here and
+        # will fail in the reader, which is reported as a per-file reject.
+        return "xlsx"
+    # Plain text: trust the extension for csv/txt, otherwise treat as delimited text
+    # (a .xls that is really a text report parses as one column and is rejected cleanly,
+    # rather than blowing up the Excel reader with an opaque engine error).
+    return by_ext if by_ext in ("csv", "pdf") else "csv"
 
 
 def _profile_aliases(profile: dict) -> set[str]:
