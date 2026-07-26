@@ -227,8 +227,14 @@ export type SuggestionsResponse = {
 export type QuerySpec = {
   target: "events" | "entities" | "correlations";
   filters: { field: string; op: string; value?: unknown; values?: unknown[] }[];
+  /** Window resolved from an anchor event, e.g. "the day before the last transaction". */
+  relative_window?: { anchor: string; offset_days: number; span_days: number } | null;
   group_by?: string | null;
   aggregate: string;
+  /** Post-grouping conditions — how "stopped calling after August" is expressed. */
+  having?: { metric: string; op: string; value?: unknown; values?: unknown[] }[];
+  /** Keep only groups covering every listed value ("called both A and B"). */
+  group_must_include?: { field: string; values: string[] } | null;
   order_desc: boolean;
   limit: number;
   explanation: string;
@@ -246,6 +252,12 @@ export type NlQueryResponse = {
   /** True match count — differs from `matched` when the result was capped. */
   total: number;
   truncated: boolean;
+  /** Concrete [start, end) dates a relative window resolved to — show this to the analyst. */
+  window?: [string, string] | null;
+  /** Rows excluded from a grouping because the key was a blank/placeholder value. */
+  skipped_blank?: number | null;
+  /** Set when the query could not be answered as asked (e.g. no event to anchor to). */
+  note?: string | null;
   spec: QuerySpec | null;
 };
 

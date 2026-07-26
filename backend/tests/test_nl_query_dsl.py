@@ -221,6 +221,7 @@ def test_schema_vocabulary_is_static_and_data_free(inv):
     known = (
         {t.value for t in Target} | {f.value for f in Field_}
         | {o.value for o in Op} | {a.value for a in Aggregate}
+        | {m.value for m in dsl.Metric} | {a.value for a in dsl.Anchor}
         | {"TRANSACTION", "CALL", "IP_SESSION", "low", "medium", "high",
            "DEBIT", "CREDIT", "IN", "OUT"}
     )
@@ -273,3 +274,116 @@ def test_grouping_skips_null_placeholders():
 
     assert [r["key"] for r in out["rows"]] == ["IMEI-REAL"]
     assert out["skipped_blank"] == 3
+
+
+# ── Q1-Q4: the shapes the DSL could not express ───────────────────────────────
+# Each was previously answered with a plausible but wrong result rather than refused,
+# which is the dangerous failure mode for a forensic tool.
+
+@pytest.fixture
+def timeline():
+    """Two subjects. A calls through August then stops; B keeps calling into October."""
+    def call(a, b, day, month=8):
+        return {"event_type": "CALL",
+                "timestamp_start": datetime(2024, month, day, 12, tzinfo=IST),
+                "primary": ("PHONE", a), "counterparty": ("PHONE", b),
+                "entity_id": "e1", "amount": None, "direction": None,
+                "attributes": {"narration": "", "location": "Surat"}, "provenance": {}}
+    events = [
+        call("+919000000001", "+919111111111", 5),
+        call("+919000000001", "+919222222222", 20),          # A: last activity in August
+        call("+919000000002", "+919111111111", 5),
+        call("+919000000002", "+919111111111", 9, month=10),  # B: still active in October
+        {"event_type": "TRANSACTION",
+         "timestamp_start": datetime(2024, 9, 15, 10, tzinfo=IST),
+         "primary": ("ACCOUNT_NO", "555"), "counterparty": None, "entity_id": "e1",
+         "amount": 100.0, "direction": "DEBIT", "attributes": {}, "provenance": {}},
+        {"event_type": "CALL",
+         "timestamp_start": datetime(2024, 9, 14, 9, tzinfo=IST),   # day before that txn
+         "primary": ("PHONE", "+919000000003"), "counterparty": ("PHONE", "+919333333333"),
+         "entity_id": "e1", "amount": None, "direction": None,
+         "attributes": {"narration": "UPI to KIRANA STORE"}, "provenance": {}},
+    ]
+    return _Inv(events, {}, {})
+
+
+def test_q1_relative_window_day_before_last_transaction(timeline):
+    """'what happened the day before the last transaction?' — the date is not knowable
+    until the data is read, so this cannot be a filter."""
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        relative_window=dsl.RelativeWindow(
+            anchor=dsl.Anchor.LAST_TRANSACTION, offset_days=-1, span_days=1),
+    )
+    out = dsl.execute(spec, timeline)
+
+    assert out["total"] == 1
+    assert out["rows"][0]["when"].startswith("2024-09-14")
+    assert out["window"] == ["2024-09-14", "2024-09-15"]
+
+
+def test_q1_window_with_no_anchor_reports_rather_than_lying(timeline):
+    spec = QuerySpec(target=Target.EVENTS,
+                     relative_window=dsl.RelativeWindow(anchor=dsl.Anchor.LAST_TRANSACTION))
+    out = dsl.execute(spec, _Inv([], {}, {}))
+    assert out["total"] == 0 and "note" in out
+
+
+def test_q2_having_finds_numbers_that_stopped_calling(timeline):
+    """'list numbers that stopped calling after August'.
+
+    Previously this planned a plain grouping and returned the *busiest* numbers — the
+    opposite of the question. `having last_seen < 2024-09-01` is the real predicate.
+    """
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.EVENT_TYPE, op=Op.EQ, value="CALL")],
+        group_by=Field_.PHONE,
+        having=[dsl.Having(metric=dsl.Metric.LAST_SEEN, op=Op.LT, value="2024-09-01")],
+    )
+    out = dsl.execute(spec, timeline)
+
+    keys = {r["key"] for r in out["rows"]}
+    assert "+919000000001" in keys        # stopped in August
+    assert "+919000000002" not in keys    # still active in October
+
+
+def test_q2_having_count_threshold(timeline):
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.EVENT_TYPE, op=Op.EQ, value="CALL")],
+        group_by=Field_.PHONE,
+        having=[dsl.Having(metric=dsl.Metric.COUNT, op=Op.GTE, value=2)],
+    )
+    out = dsl.execute(spec, timeline)
+    assert all(r["count"] >= 2 for r in out["rows"])
+
+
+def test_q3_group_must_include_both_parties(timeline):
+    """'which numbers called both A and B' — a set intersection over a group."""
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        group_by=Field_.PHONE,
+        group_must_include=dsl.GroupContains(
+            field=Field_.COUNTERPARTY,
+            values=["+919111111111", "+919222222222"]),
+    )
+    out = dsl.execute(spec, timeline)
+
+    # Only subject 1 called both; subject 2 called only the first.
+    assert [r["key"] for r in out["rows"]] == ["+919000000001"]
+
+
+def test_q4_any_text_searches_across_fields(timeline):
+    """A term the analyst cannot map to one column — narration here, location elsewhere."""
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.ANY_TEXT, op=Op.CONTAINS, value="kirana")],
+    )
+    assert dsl.execute(spec, timeline)["total"] == 1
+
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.ANY_TEXT, op=Op.CONTAINS, value="surat")],
+    )
+    assert dsl.execute(spec, timeline)["total"] == 4

@@ -25,13 +25,13 @@ give the evidence and the measurements behind each row.
 | **G4** | Password-protected archive members | counted at WARNING; analyst holds the password | [§1](#1-zip-archives-were-never-opened--92-of-them) |
 | **G5** | **Correlation returns 0** — only 1 phone↔account bridge exists | blocks FR-9, the flagship feature | [Why correlation still returns 0](#why-correlation-still-returns-0) |
 | **G6** | PDF parsing is off by default, and that is where the bank evidence is | transactions ×3.3 when enabled | [§3](#3-financial-evidence-is-locked-in-pdf) |
-| **Q1** | DSL: relative dates (*"day before the last transaction"*) | returns a plausible wrong answer | [Known limits of the query DSL](#known-limits-of-the-query-dsl--open) |
-| **Q2** | DSL: absence/negation (*"stopped calling after August"*) | returns roughly the opposite of what was asked | [same](#known-limits-of-the-query-dsl--open) |
-| **Q3** | DSL: cross-entity comparison (*"called both A and B"*) | not representable | [same](#known-limits-of-the-query-dsl--open) |
-| **Q4** | DSL: free-text search across fields | single-field `contains` only | [same](#known-limits-of-the-query-dsl--open) |
+| ~~Q1~~ | ~~DSL: relative dates~~ | **CLOSED** — `relative_window` | [below](#known-limits-of-the-query-dsl--closed) |
+| ~~Q2~~ | ~~DSL: absence/negation~~ | **CLOSED** — `having` | [below](#known-limits-of-the-query-dsl--closed) |
+| ~~Q3~~ | ~~DSL: cross-entity comparison~~ | **CLOSED** — `group_must_include` | [below](#known-limits-of-the-query-dsl--closed) |
+| ~~Q4~~ | ~~DSL: free-text search~~ | **CLOSED** — `any_text` field | [below](#known-limits-of-the-query-dsl--closed) |
 
-**Highest value next:** G6 then G5 (an `entity_map.csv` is the fastest route to a non-zero
-correlation count), then Q2 (smallest DSL change with the worst current failure mode).
+**Highest value next:** G6 then G5 — an `entity_map.csv` is the fastest route to a non-zero
+correlation count. The DSL gaps (Q1–Q4) are closed.
 
 **When you close one,** update its row and the measurement it cites — this file is only
 useful while its numbers are true. The previous gap document rotted precisely because
@@ -255,31 +255,32 @@ reports) — "what does the charge sheet say about X". That requires sending cas
 external service and is gated on revisiting the data-governance decision. Recorded here as
 a follow-on, not built.
 
-### Known limits of the query DSL — open
+### Known limits of the query DSL — closed
 
-These are **DSL expressiveness gaps, not planner failures**. The model produces the closest
-valid plan it can; the language has no way to say what the question means, so the answer
-comes back plausible and subtly wrong rather than refused. That is the dangerous shape, so
-each one is listed with what it would take to close it.
+These four question shapes were **expressiveness gaps, not planner failures**: the model
+produced the closest valid plan it could, and because the language had no way to say what
+the question meant, the answer came back plausible and subtly wrong rather than refused.
+That is the dangerous shape for a forensic tool, so all four were closed.
 
-| # | Question shape | What happens now | What it needs |
-|---|---|---|---|
-| Q1 | **Relative dates** — *"the day before the last transaction"*, *"the week after the FIR"* | Plans `event_type=TRANSACTION` and drops the relative clause. Returns all transactions, not the ones on that day | An anchor concept: `relative_to` (`first_event`/`last_event`/a literal date) plus an offset, resolved by the executor after the anchor is computed. Cannot be a plain filter — the value depends on the result set |
-| Q2 | **Absence / negation over time** — *"numbers that stopped calling after August"*, *"accounts with no activity since March"* | Plans `group_by=phone` over all calls. Returns the busiest numbers — arguably the opposite of what was asked | A `having` clause over grouped buckets (e.g. `max(timestamp) < X`). The filter must apply *after* grouping; today filters only run before it |
-| Q3 | **Cross-entity comparison** — *"numbers that called both A and B"* | No representation; the planner picks one side | Set intersection across two grouped result sets |
-| Q4 | **Free-text search over narration** | `contains` works on a single field only | Full-text index across narration/location/label, or the RAG path above |
+| # | Question shape | Was | Now | Verified on real data |
+|---|---|---|---|---|
+| Q1 | *"the day before the last transaction"* | Dropped the relative clause, returned **all** transactions | `relative_window` — anchor (`last_transaction`, `first_call`, …) + `offset_days` + `span_days`, resolved in a first pass against unfiltered events, then applied as a date range | Anchor resolved to 2025-03-01; window `2025-02-28 → 2025-03-01` returned 4 events |
+| Q2 | *"numbers that stopped calling after August"* | Grouped and returned the **busiest** numbers — the opposite of the question | `having` — post-grouping conditions on `count` / `sum_amount` / `first_seen` / `last_seen` | `having last_seen <= 2024-08-31` returned **757** numbers on the 166k-event CDR corpus |
+| Q3 | *"numbers that called both A and B"* | Not representable; the planner picked one side | `group_must_include` — keeps only groups whose events cover **every** listed value | Found exactly the caller who contacted both of two known numbers |
+| Q4 | *"mentions X anywhere"* | `contains` searched one field only | `any_text` — a synthetic field concatenating narration, location, cell ID, IMEI/IMSI, IP, counterparty, label and source file | "Surat" matched 43,570 events across several fields |
 
-Q1 and Q2 were both observed live against the real case. Q3 and Q4 are known-missing rather
-than observed.
+**Planner behaviour is verified, not assumed.** Given the four questions in English, Gemini
+selected the right construct each time (`relative_window`, `having`, `group_must_include`,
+`any_text`) — see the live-run figures above.
 
-**Guidance until these close:** the endpoint returns the generated `spec`, so an analyst can
-see the query actually run. Any answer to a question of the shapes above should be checked
-against that spec before it is relied on — the plan will look reasonable while omitting the
-part that mattered.
+**Auditability.** `/v1/query` returns the resolved `window`, any `skipped_blank` count, a
+`note` when a query could not be answered as asked (e.g. no event to anchor to), and the
+full `spec`. A relative-date answer is only trustworthy if the analyst can see which day it
+actually resolved to.
 
-**Suggested order.** Q2 (`having`) is the highest value and the smallest change — it is a
-post-grouping filter pass in `_grouped`. Q1 needs a two-phase execute (resolve anchor, then
-filter) and touches the schema. Q3 and Q4 are larger and should wait for a real need.
+**Still not expressible** (no current demand; record here if one appears): multi-hop graph
+questions (*"who did the people who called A then pay?"*) and cross-dataset joins beyond
+what entity resolution already merges.
 
 ---
 

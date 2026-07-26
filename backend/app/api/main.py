@@ -350,6 +350,11 @@ def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst")))
                 "matched": len(out["rows"]),
                 "total": out["total"],
                 "truncated": out["truncated"],
+                # Resolved relative window, blank-key count, and any executor note —
+                # all part of "what actually ran", which the analyst must be able to see.
+                "window": out.get("window"),
+                "skipped_blank": out.get("skipped_blank"),
+                "note": out.get("note"),
                 # The generated plan is part of the evidentiary record: an analyst must be
                 # able to see exactly what was run, not just the answer.
                 "spec": spec.model_dump(mode="json"),
@@ -371,6 +376,9 @@ def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst")))
         "matched": len(rows) if rows is not None else 0,
         "total": result.get("total", len(rows) if rows is not None else 0),
         "truncated": bool(result.get("truncated")),
+        "window": None,
+        "skipped_blank": None,
+        "note": None,
         "spec": None,
     }
 

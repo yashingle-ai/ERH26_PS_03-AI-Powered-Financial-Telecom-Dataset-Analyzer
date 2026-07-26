@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -70,6 +70,8 @@ class Field_(str, Enum):
     RISK_SCORE = "risk_score"
     RISK_BAND = "risk_band"
     RULE_FLAG = "rule_flag"
+    #: Q4 — every searchable text field at once, for "mentions X anywhere" questions.
+    ANY_TEXT = "any_text"
 
 
 class Filter(BaseModel):
@@ -88,6 +90,74 @@ class Aggregate(str, Enum):
     MAX_AMOUNT = "max_amount"
 
 
+class Metric(str, Enum):
+    """Per-group values a `having` clause can test (Q2)."""
+
+    COUNT = "count"
+    SUM_AMOUNT = "sum_amount"
+    AVG_AMOUNT = "avg_amount"
+    MAX_AMOUNT = "max_amount"
+    FIRST_SEEN = "first_seen"     # ISO date of the group's earliest event
+    LAST_SEEN = "last_seen"       # ISO date of the group's latest event
+
+
+class Having(BaseModel):
+    """A condition applied *after* grouping.
+
+    Q2: questions about absence ("numbers that stopped calling after August", "accounts
+    with no activity since March") are properties of a whole group, not of any single
+    row, so a pre-group filter cannot express them. Without this the planner fell back to
+    a plain grouping and returned the *busiest* numbers — the opposite of the question.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    metric: Metric
+    op: Op
+    value: Any = None
+    values: list[Any] | None = None
+
+
+class Anchor(str, Enum):
+    """A point in the data that a relative window is measured from (Q1)."""
+
+    FIRST_EVENT = "first_event"
+    LAST_EVENT = "last_event"
+    FIRST_TRANSACTION = "first_transaction"
+    LAST_TRANSACTION = "last_transaction"
+    FIRST_CALL = "first_call"
+    LAST_CALL = "last_call"
+
+
+class RelativeWindow(BaseModel):
+    """A calendar window positioned relative to an anchor event (Q1).
+
+    "The day before the last transaction" cannot be a filter, because the date is not
+    known until the data has been read. Previously the planner dropped the relative clause
+    and returned every transaction. Resolved here in a first pass, then applied as a date
+    range.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    anchor: Anchor
+    offset_days: int = Field(default=0, description="Days from the anchor; negative = before.")
+    span_days: int = Field(default=1, ge=1, description="Length of the window in days.")
+
+
+class GroupContains(BaseModel):
+    """Keep only groups whose events cover *every* listed value (Q3).
+
+    "Numbers that called both A and B" is a set-intersection question: it holds of a
+    group, and no single event satisfies it.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    field: Field_
+    values: list[str]
+
+
 class QuerySpec(BaseModel):
     """A validated, executable query. This is what the LLM fills in — nothing else."""
 
@@ -95,8 +165,11 @@ class QuerySpec(BaseModel):
 
     target: Target
     filters: list[Filter] = Field(default_factory=list)
+    relative_window: RelativeWindow | None = None
     group_by: Field_ | None = None
     aggregate: Aggregate = Aggregate.COUNT
+    having: list[Having] = Field(default_factory=list)
+    group_must_include: GroupContains | None = None
     order_desc: bool = True
     limit: int = Field(default=100, ge=1, le=2000)
     explanation: str = Field(
@@ -152,6 +225,20 @@ def _event_value(ev: dict, f: Field_, entities: dict) -> Any:
             return attrs.get("cell_id")
         case Field_.LOCATION:
             return attrs.get("location")
+        case Field_.ANY_TEXT:
+            # Q4: one haystack of every human-readable field, so "mentions X anywhere"
+            # does not require the analyst to know which column X lives in.
+            cp = ev.get("counterparty")
+            parts = [
+                ev.get("event_type"), ev.get("direction"),
+                (entities.get(ev.get("entity_id")) or {}).get("label"),
+                attrs.get("narration"), attrs.get("location"), attrs.get("cell_id"),
+                attrs.get("imei"), attrs.get("imsi"),
+                attrs.get("public_ip") or attrs.get("ip"),
+                f"{cp[1]}" if isinstance(cp, (tuple, list)) and len(cp) >= 2 else None,
+                (ev.get("provenance") or {}).get("source_file"),
+            ]
+            return " ".join(str(p) for p in parts if p)
     return None
 
 
@@ -243,6 +330,39 @@ def _matches(actual: Any, flt: Filter) -> bool:
 
 # ── execution ─────────────────────────────────────────────────────────────────
 
+_ANCHOR_TYPE = {
+    Anchor.FIRST_TRANSACTION: "TRANSACTION", Anchor.LAST_TRANSACTION: "TRANSACTION",
+    Anchor.FIRST_CALL: "CALL", Anchor.LAST_CALL: "CALL",
+}
+_ANCHOR_IS_LAST = {Anchor.LAST_EVENT, Anchor.LAST_TRANSACTION, Anchor.LAST_CALL}
+
+
+def _resolve_window(win: RelativeWindow, events: list[dict]) -> tuple[date, date] | None:
+    """Turn an anchor + offset into a concrete [start, end) date range (Q1).
+
+    Resolved against the *unfiltered* events so "the day before the last transaction"
+    means the last transaction in the case, not the last one that survived the filters.
+    """
+    want = _ANCHOR_TYPE.get(win.anchor)
+    stamps = [
+        e["timestamp_start"] for e in events
+        if isinstance(e.get("timestamp_start"), datetime)
+        and (want is None or e.get("event_type") == want)
+    ]
+    if not stamps:
+        return None
+    anchor = (max(stamps) if win.anchor in _ANCHOR_IS_LAST else min(stamps)).date()
+    start = anchor + timedelta(days=win.offset_days)
+    return start, start + timedelta(days=win.span_days)
+
+
+def _in_window(ev: dict, window: tuple[date, date]) -> bool:
+    ts = ev.get("timestamp_start")
+    if not isinstance(ts, datetime):
+        return False
+    return window[0] <= ts.date() < window[1]
+
+
 def execute(spec: QuerySpec, inv) -> dict:
     """Run a validated spec against an Investigation. Pure local computation."""
     entities = inv.entities
@@ -263,10 +383,22 @@ def execute(spec: QuerySpec, inv) -> dict:
         def getter(row: dict, f: Field_):
             return row.get(f.value)
 
-    rows = [r for r in pool if all(_matches(getter(r, f.field), f) for f in spec.filters)]
+    window = None
+    if spec.relative_window is not None and spec.target is Target.EVENTS:
+        window = _resolve_window(spec.relative_window, inv.events)
+        if window is None:
+            return {"rows": [], "total": 0, "truncated": False,
+                    "note": "no events available to anchor the relative window"}
+
+    rows = [r for r in pool
+            if (window is None or _in_window(r, window))
+            and all(_matches(getter(r, f.field), f) for f in spec.filters)]
 
     if spec.group_by is not None:
-        return _grouped(rows, spec, getter)
+        out = _grouped(rows, spec, getter)
+        if window:
+            out["window"] = [window[0].isoformat(), window[1].isoformat()]
+        return out
 
     total = len(rows)
     if spec.target is Target.EVENTS:
@@ -290,7 +422,12 @@ def execute(spec: QuerySpec, inv) -> dict:
              "why": (h.get("explanation") or "")[:120]}
             for h in rows[: spec.limit]
         ]
-    return {"rows": shaped, "total": total, "truncated": total > len(shaped)}
+    out = {"rows": shaped, "total": total, "truncated": total > len(shaped)}
+    if window:
+        # Surface the resolved dates: "the day before the last transaction" is only
+        # auditable if the analyst can see which day that turned out to be.
+        out["window"] = [window[0].isoformat(), window[1].isoformat()]
+    return out
 
 
 def _shape_event(e: dict, entities: dict) -> dict:
@@ -304,6 +441,38 @@ def _shape_event(e: dict, entities: dict) -> dict:
         "direction": e.get("direction"),
         "source_file": prov.get("source_file"),
     }
+
+
+def _as_list(v: Any) -> list:
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
+def _metric(items: list[dict], m: Metric) -> Any:
+    """One aggregate value for a group, for a `having` test."""
+    if m is Metric.COUNT:
+        return len(items)
+    if m in (Metric.FIRST_SEEN, Metric.LAST_SEEN):
+        stamps = [i["timestamp_start"] for i in items
+                  if isinstance(i.get("timestamp_start"), datetime)]
+        if not stamps:
+            return None
+        chosen = max(stamps) if m is Metric.LAST_SEEN else min(stamps)
+        return chosen.date().isoformat()      # compared lexicographically; ISO sorts right
+    amts = [a for a in (_num(i.get("amount")) for i in items) if a is not None]
+    if not amts:
+        return 0.0
+    if m is Metric.SUM_AMOUNT:
+        return sum(amts)
+    if m is Metric.AVG_AMOUNT:
+        return sum(amts) / len(amts)
+    return max(amts)
+
+
+def _as_filter(h: Having) -> Filter:
+    """Reuse the row comparator for group metrics — one comparison semantics, not two."""
+    return Filter(field=Field_.ANY_TEXT, op=h.op, value=h.value, values=h.values)
 
 
 #: Placeholders operators use for "no value". Grouping on them produces a meaningless
@@ -335,6 +504,21 @@ def _grouped(rows: list[dict], spec: QuerySpec, getter) -> dict:
             return sum(amts) / len(amts)
         return max(amts)
 
+    if spec.group_must_include is not None:      # Q3
+        need = {_phone_key(v) or str(v).lower()
+                for v in spec.group_must_include.values}
+        gf = spec.group_must_include.field
+        buckets = {
+            k: v for k, v in buckets.items()
+            if need <= {_phone_key(x) or str(x).lower()
+                        for i in v
+                        for x in _as_list(getter(i, gf))}
+        }
+
+    if spec.having:                              # Q2
+        buckets = {k: v for k, v in buckets.items()
+                   if all(_matches(_metric(v, h.metric), _as_filter(h)) for h in spec.having)}
+
     ranked = sorted(((k, score(v), len(v)) for k, v in buckets.items()),
                     key=lambda t: t[1], reverse=spec.order_desc)
     shaped = [{"key": str(k), spec.aggregate.value: round(s, 2), "events": n}
@@ -353,11 +537,14 @@ def schema_vocabulary() -> dict:
         "fields": [f.value for f in Field_],
         "operators": [o.value for o in Op],
         "aggregates": [a.value for a in Aggregate],
+        "having_metrics": [m.value for m in Metric],
+        "anchors": [a.value for a in Anchor],
         "event_types": ["TRANSACTION", "CALL", "IP_SESSION"],
         "risk_bands": ["low", "medium", "high"],
         "directions": ["DEBIT", "CREDIT", "IN", "OUT"],
     }
 
 
-__all__ = ["Aggregate", "Field_", "Filter", "Op", "QuerySpec", "Target",
+__all__ = ["Aggregate", "Anchor", "Field_", "Filter", "GroupContains", "Having",
+           "Metric", "Op", "QuerySpec", "RelativeWindow", "Target",
            "execute", "schema_vocabulary"]

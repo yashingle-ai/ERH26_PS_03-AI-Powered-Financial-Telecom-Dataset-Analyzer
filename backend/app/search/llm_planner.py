@@ -52,7 +52,22 @@ group_by=counterparty, aggregate=count.
 - "transfers over N" -> target=events, event_type=TRANSACTION, amount gte N.
 - "high risk entities" -> target=entities, risk_band eq high.
 - Prefer a group_by when the question asks "who/which ... most/top".
-- Set `explanation` to one plain sentence the analyst will read above the results.
+
+Questions a plain filter cannot express — use the right construct:
+- Anything relative to another event ("the day before the last transaction", "the week \
+after the first call") -> set `relative_window` with an anchor, offset_days (negative = \
+before) and span_days. Do NOT try to express this as a date filter; the date is not known \
+until the data is read.
+- Anything about absence or a group's own history ("numbers that stopped calling after \
+August", "accounts with no activity since March", "entities with more than 50 calls") -> \
+group_by the subject, then a `having` clause on last_seen / first_seen / count. A plain \
+filter would return the busiest rows, which is the opposite of "stopped".
+- "called both A and B", "used by both X and Y" -> group_by the subject and set \
+`group_must_include` with the field and every required value.
+- "mentions X anywhere" / a term you cannot map to one field -> filter on `any_text` \
+with `contains`.
+
+Set `explanation` to one plain sentence the analyst will read above the results.
 
 Vocabulary:
 {vocab}"""
