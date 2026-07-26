@@ -6,13 +6,15 @@ services:
     command: uvicorn backend.app.api.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
-    # Seed credentials and the JWT secret. Unset, the API generates a random
-    # password and logs it once — fine locally, useless behind compose where
-    # nobody reads the log. Set them in .env; never commit real values.
+    # Passed through from .env, with NO fallback value on purpose. Unset, the API
+    # generates a random password per boot and logs it once; a `:-analyst` default
+    # here would silently replace that with a known credential, which is worse than
+    # having none. Recover a generated password with:
+    #     docker compose logs api | grep "generated a random"
     environment:
-      ERAKSHAK_JWT_SECRET: ${ERAKSHAK_JWT_SECRET:-dev-only-change-me}
-      ERAKSHAK_ANALYST_PASSWORD: ${ERAKSHAK_ANALYST_PASSWORD:-analyst}
-      ERAKSHAK_ADMIN_PASSWORD: ${ERAKSHAK_ADMIN_PASSWORD:-admin}
+      ERAKSHAK_JWT_SECRET: ${ERAKSHAK_JWT_SECRET:-}
+      ERAKSHAK_ANALYST_PASSWORD: ${ERAKSHAK_ANALYST_PASSWORD:-}
+      ERAKSHAK_ADMIN_PASSWORD: ${ERAKSHAK_ADMIN_PASSWORD:-}
       # Natural-language query. Absent, /v1/query falls back to the offline
       # rule-based engine — the API never hard-depends on network access.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

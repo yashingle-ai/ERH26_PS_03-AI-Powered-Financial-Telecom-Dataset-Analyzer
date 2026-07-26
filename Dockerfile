@@ -37,15 +37,30 @@ ENV PATH=/opt/venv/bin:$PATH \
 # case evidence; nothing about a session should leave the host.
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
+# matplotlib and streamlit both want a writable HOME for their caches. A service
+# account has none by default, and the failure surfaces as an unrelated-looking
+# permission error deep in a plot call.
+ENV HOME=/home/erakshak \
+    MPLCONFIGDIR=/home/erakshak/.cache/matplotlib
+
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
+# Run as a service account, not root. A forensic tool ingests attacker-supplied
+# files — malformed archives, PDFs, spreadsheets — so a parser bug should not
+# start out with root in the container.
+#
 # Analyst-writable paths: learned mapping profiles land in config/profiles,
-# uploads/outputs/models under data/. Created here so a read-only bind mount
-# is a deliberate choice rather than a first-write crash.
-RUN mkdir -p data/uploads data/outputs data/models config/profiles
+# uploads/outputs/models under data/. Created and chowned here so a read-only
+# mount is a deliberate choice rather than a first-write crash.
+RUN groupadd --system --gid 10001 erakshak \
+    && useradd --system --uid 10001 --gid 10001 --home-dir "$HOME" erakshak \
+    && mkdir -p data/uploads data/outputs data/models config/profiles "$MPLCONFIGDIR" \
+    && chown -R 10001:10001 /app "$HOME"
+
+USER 10001:10001
 
 EXPOSE 8000 8501
 

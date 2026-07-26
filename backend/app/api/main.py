@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -26,6 +27,7 @@ from backend.app import pipeline
 from backend.app.api.security import (
     authenticate_user,
     create_access_token,
+    initialise_auth,
     require_role,
 )
 from backend.app.core.logging_config import audit, get_logger, setup_logging
@@ -36,9 +38,20 @@ log = get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
 DATASETS = ROOT / "datasets" / "raw"
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Resolve credentials/JWT secret eagerly so their "not set" warnings land at
+    # boot. Lazily they only appear on first sign-in — and behind compose, nobody
+    # can sign in without first reading the generated password out of the log.
+    initialise_auth()
+    yield
+
+
 app = FastAPI(title="ERakshak API",
               description="AI-Powered Financial & Telecom Dataset Analyzer (ERH26_PS_03)",
-              version="1.0.0")
+              version="1.0.0",
+              lifespan=lifespan)
 
 _cors_origins = [
     o.strip()

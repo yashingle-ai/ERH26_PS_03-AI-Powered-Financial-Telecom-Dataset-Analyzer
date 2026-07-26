@@ -81,6 +81,21 @@ def _users() -> dict:
     return _USERS
 
 
+def initialise_auth() -> None:
+    """Resolve credentials and the JWT secret at boot rather than on first use.
+
+    Both are lazy, and both warn when unset — a generated password, an ephemeral
+    signing secret. Lazily, those warnings only appear once somebody tries to sign
+    in, which is too late: behind compose nobody *can* sign in without first
+    reading the generated password out of the log.
+
+    Idempotent. `_users()` and `_secret()` both cache, so calling this and then
+    authenticating will not reseed and invalidate what was just logged.
+    """
+    _users()
+    _secret()
+
+
 def authenticate_user(username: str, password: str) -> dict | None:
     u = _users().get(username)
     if not u or not _verify(password, u["hashed"]):

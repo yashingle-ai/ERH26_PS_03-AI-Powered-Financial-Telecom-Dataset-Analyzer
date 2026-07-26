@@ -434,18 +434,30 @@ npm run build        # production build
 ## Running in Docker
 
 The image is multi-stage: the compiler toolchain needed to install the scientific stack
-stays in the build stage, so the runtime image ships no `gcc`.
+stays in the build stage, so the runtime image ships no `gcc`. It runs as the unprivileged
+user `erakshak` (uid 10001), not root.
 
 **Both services at once** — API on 8000, Streamlit dashboard on 8501:
 
 ```bash
-cp .env.example .env          # then set ERAKSHAK_JWT_SECRET + the two passwords
+cp .env.example .env          # set ERAKSHAK_JWT_SECRET + the two passwords
 docker compose up --build
 docker compose ps             # both should read "healthy"
 ```
 
-Without a `.env` the compose defaults are `analyst` / `analyst` and a placeholder JWT
-secret — fine for a local demo, **not** for anything holding real case data.
+### Credentials
+
+**No default password ships anywhere.** With `ERAKSHAK_ANALYST_PASSWORD` unset the API
+generates a random one per boot and logs it at startup:
+
+```bash
+docker compose logs api | grep "generated a random"
+```
+
+That is a deliberate refusal to ship a known credential — a `:-analyst` fallback in
+compose would be worse than having none. For anything you intend to sign into twice, set
+the values in `.env`; an unset `ERAKSHAK_JWT_SECRET` also means an ephemeral signing key,
+so every restart invalidates existing tokens.
 
 **Just the API:**
 
@@ -460,15 +472,16 @@ docker run --rm -p 8000:8000 \
 
 Notes worth knowing:
 
-- **Leave the password env vars unset and the API generates a random one** and logs it
-  once at startup. That is deliberate — no default credential ships in the image — but
-  under compose nobody reads that log, so set them explicitly.
 - `datasets/` and `data/` are **bind-mounted, never copied in**. `.dockerignore` keeps
   case evidence out of the build context, so the image stays ~4 MB of application code.
 - Streamlit's usage telemetry is switched off in the image. A forensic tool should not
   report on its own sessions.
 - No `GEMINI_API_KEY` → `/v1/query` falls back to the offline rule-based engine. The
   container never requires network access.
+- **On native Linux**, bind mounts keep host ownership, so the uid-10001 service account
+  may not be able to write to `data/` or `config/`. Either `sudo chown -R 10001:10001
+  data config`, or run as yourself with `user: "${UID}:${GID}"` on the service. Docker
+  Desktop on Windows and macOS is unaffected — mounts there ignore ownership.
 
 ---
 

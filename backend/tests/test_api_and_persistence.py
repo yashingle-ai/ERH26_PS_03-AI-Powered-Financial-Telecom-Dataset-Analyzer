@@ -39,6 +39,34 @@ def test_bad_login_rejected(client):
     assert r.status_code == 401
 
 
+def test_generated_password_is_logged_at_boot_not_first_login(monkeypatch, caplog):
+    """A generated credential must reach the log on startup.
+
+    Seeded lazily it only appears once somebody signs in — but behind compose
+    nobody can sign in without first reading it out of the log. Guards the
+    lifespan hook: without it the assertion after startup fails.
+    """
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from backend.app.api import security
+    from backend.app.api.main import app
+
+    monkeypatch.delenv("ERAKSHAK_ANALYST_PASSWORD", raising=False)
+    monkeypatch.delenv("ERAKSHAK_JWT_SECRET", raising=False)
+    monkeypatch.setattr(security, "_USERS", None)      # force a reseed
+    monkeypatch.setattr(security._secret, "_ephemeral", None, raising=False)
+
+    with caplog.at_level(logging.WARNING, logger="erakshak.api.security"):
+        with TestClient(app):                          # runs lifespan, no request made
+            pass
+        text = caplog.text
+
+    assert "generated a random analyst password" in text
+    assert "EPHEMERAL" in text
+
+
 # ---- C1: persistence durability ----
 def test_persistence_roundtrip(smoke_dataset, tmp_path):
     from backend.app import pipeline
