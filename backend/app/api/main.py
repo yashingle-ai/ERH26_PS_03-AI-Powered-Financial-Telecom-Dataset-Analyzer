@@ -11,13 +11,24 @@ Docs: http://localhost:8000/docs
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -31,6 +42,7 @@ from backend.app.api.security import (
     require_role,
 )
 from backend.app.core.logging_config import audit, get_logger, setup_logging
+from backend.app.ingestion import detector
 
 setup_logging()
 log = get_logger(__name__)
@@ -241,6 +253,131 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 @v1.get("/datasets")
 def datasets(user=Depends(require_role("analyst"))):
     return {"datasets": [p.name for p in sorted(DATASETS.glob("*")) if p.is_dir()]}
+
+
+# ---- upload ----
+#: Extensions the ingestion layer can actually open, plus archives it expands.
+UPLOAD_EXTENSIONS = set(detector.FORMAT_BY_EXT) | {".zip"}
+UPLOAD_KINDS = ("bank", "cdr", "ipdr", "other")
+_MAX_UPLOAD_BYTES = int(os.getenv("ERAKSHAK_MAX_UPLOAD_MB", "256")) * 1024 * 1024
+_MAX_UPLOAD_FILES = int(os.getenv("ERAKSHAK_MAX_UPLOAD_FILES", "200"))
+_CHUNK = 1024 * 1024
+
+#: Dataset names become directory names. Anything outside this set is refused rather
+#: than escaped, so there is no encoding for a caller to slip through.
+_SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _dataset_dir(ds: str, *, create: bool = False) -> Path:
+    """Resolve a dataset directory, refusing anything that escapes DATASETS."""
+    if not _SAFE_DATASET.match(ds) or ".." in ds:
+        raise HTTPException(400, "invalid dataset name: use letters, digits, . _ - (max 64)")
+    path = (DATASETS / ds).resolve()
+    # Defence in depth: the regex already excludes separators, but a symlinked
+    # datasets/raw would still be a way out. Verify the resolved path, not the input.
+    if not path.is_relative_to(DATASETS.resolve()):
+        raise HTTPException(400, "invalid dataset name")
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    elif not path.is_dir():
+        raise HTTPException(404, f"dataset '{ds}' not found")
+    return path
+
+
+def _safe_filename(name: str) -> str:
+    """Reduce a client-supplied filename to a bare, harmless basename.
+
+    Uploads are attacker-controlled by definition. Take the last path component
+    under both separators (a Windows client sends backslashes that PurePosixPath
+    would keep), drop control characters, and refuse the traversal names outright.
+    """
+    base = re.split(r"[\\/]", name)[-1].strip()
+    base = re.sub(r"[\x00-\x1f\x7f]", "", base)
+    base = base.lstrip(".") if base in {".", ".."} else base
+    if not base or base in {".", ".."}:
+        raise HTTPException(400, "invalid filename")
+    return base[:200]
+
+
+def _unique_path(directory: Path, filename: str) -> Path:
+    """Never overwrite existing evidence — suffix instead."""
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem, suffix = Path(filename).stem, Path(filename).suffix
+    for n in range(1, 1000):
+        candidate = directory / f"{stem}-{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise HTTPException(409, f"too many files named like '{filename}'")
+
+
+@v1.post("/upload/{ds}")
+async def upload(ds: str,
+                 files: list[UploadFile] = File(...),
+                 kind: str = Form("other"),
+                 user=Depends(require_role("analyst"))):
+    """Accept Bank/CDR/IPDR files into datasets/raw/{ds}/{kind}/.
+
+    `kind` only decides the subfolder — the parser identifies a file by its content,
+    not its location, so a misfiled statement is still read as a statement.
+
+    Every file is reported back with its own status. A rejected file must never be
+    silently skipped: in a forensic tool, evidence you think you uploaded and
+    evidence the system actually holds have to be the same set.
+    """
+    if kind not in UPLOAD_KINDS:
+        raise HTTPException(400, f"kind must be one of {', '.join(UPLOAD_KINDS)}")
+    if not files:
+        raise HTTPException(400, "no files provided")
+    if len(files) > _MAX_UPLOAD_FILES:
+        raise HTTPException(413, f"too many files in one request (max {_MAX_UPLOAD_FILES})")
+
+    target = _dataset_dir(ds, create=True) / kind
+    target.mkdir(parents=True, exist_ok=True)
+
+    results, accepted, total_bytes = [], 0, 0
+    for upload_file in files:
+        name = _safe_filename(upload_file.filename or "")
+        suffix = Path(name).suffix.lower()
+        if suffix not in UPLOAD_EXTENSIONS:
+            shown = suffix or "no extension"
+            results.append({"file": name, "status": "rejected",
+                            "reason": f"unsupported type '{shown}'"})
+            continue
+
+        dest = _unique_path(target, name)
+        written = 0
+        try:
+            with dest.open("wb") as out:
+                while chunk := await upload_file.read(_CHUNK):
+                    written += len(chunk)
+                    if written > _MAX_UPLOAD_BYTES:
+                        raise ValueError(f"exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit")
+                    out.write(chunk)
+        except Exception as exc:
+            # Streamed writes leave a partial file behind on failure; a truncated
+            # statement that still parses is worse than no file at all.
+            dest.unlink(missing_ok=True)
+            results.append({"file": name, "status": "rejected", "reason": str(exc)})
+            continue
+        finally:
+            await upload_file.close()
+
+        accepted += 1
+        total_bytes += written
+        results.append({"file": dest.name, "status": "stored",
+                        "bytes": written, "path": f"{ds}/{kind}/{dest.name}"})
+
+    if accepted:
+        # Results are memoised per (dataset, window); without this the next analyze
+        # would confidently return figures that predate the upload.
+        _analyze.cache_clear()
+
+    audit("upload", user=user["username"], dataset=ds, kind=kind,
+          accepted=accepted, rejected=len(results) - accepted, bytes=total_bytes)
+    return {"dataset": ds, "kind": kind, "accepted": accepted,
+            "rejected": len(results) - accepted, "bytes": total_bytes, "files": results}
 
 
 @v1.post("/analyze")

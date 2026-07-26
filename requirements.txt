@@ -30,6 +30,10 @@ Jinja2==3.1.6
 # --- API + security ---
 fastapi==0.139.0
 uvicorn==0.50.2
+# Form/multipart parsing: the login form and /v1/upload both need it. Pinned
+# directly because it otherwise arrives only as a streamlit transitive dep —
+# the API must not depend on a UI library to parse its own request bodies.
+python-multipart==0.0.32
 PyJWT==2.13.0
 bcrypt==5.0.0
 

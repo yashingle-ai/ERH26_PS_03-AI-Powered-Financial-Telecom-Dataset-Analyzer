@@ -36,7 +36,7 @@ There are **three** front doors onto the same pipeline. Pick by what you're test
 | Surface | URL | What it's for |
 |---|---|---|
 | **React console** | `http://localhost:8080` | The product UI — dashboards, network graph, timeline |
-| **Streamlit dashboard** | `http://localhost:8501` | Analyst workbench — has features the React app doesn't, incl. file upload |
+| **Streamlit dashboard** | `http://localhost:8501` | Analyst workbench — mapping and data-quality tooling the React app doesn't have |
 | **CLI** | — | Fastest way to prove the pipeline works; no servers |
 
 The React console talks to the **FastAPI** backend on `http://127.0.0.1:8000`.
@@ -220,7 +220,8 @@ Follow these in order — each step depends on the last.
 | 9 | **Correlations** | — | Money-movement events that coincide with a call/IP session inside window `W` — this is the core fusion result |
 | 10 | **Reports** | — | Print-preview styled report. **Stays light in dark mode on purpose** — it simulates paper. Ctrl/Cmd+P to check print CSS |
 | 11 | **Command palette** | `Ctrl/Cmd + K` | Jump to any page or entity |
-| 12 | **Upload & Ingest** | — | Shows "HTTP upload is not available yet" — [expected](#known-gaps), not a bug |
+
+
 | 13 | **Sign out** | User menu → Sign out | Back to login; protected routes redirect |
 
 **Accessibility spot-check:** tab through with the keyboard — focus rings should be
@@ -230,8 +231,8 @@ visible on every control. If your OS is set to reduced motion, animations should
 
 ## Journey 2: the Streamlit dashboard (analyst workbench)
 
-This surface has features the React console doesn't — including **file upload** and the
-mapping/quality tooling. No API server needed.
+This surface has the mapping and data-quality tooling the React console doesn't.
+No API server needed.
 
 ```bash
 python -m streamlit run backend/app/dashboard/app.py --server.address 127.0.0.1
@@ -318,6 +319,7 @@ H="Authorization: Bearer $TOKEN"
 | `GET /health` | Liveness (public) |
 | `POST /v1/auth/token` | Login → bearer token |
 | `GET /v1/datasets` | List available datasets |
+| `POST /v1/upload/{ds}` | Upload evidence files into `datasets/raw/{ds}/{kind}/` (multipart) |
 | `POST /v1/analyze` | Full run: summary, file counts, money-flow series, correlations, top risk |
 | `GET /v1/entities/{ds}` | Ranked entities (paginated) |
 | `GET /v1/events/{ds}` | Fused events (paginated, filter by `event_type`) |
@@ -332,7 +334,17 @@ curl -s -H "$H" -X POST http://127.0.0.1:8000/v1/analyze \
   -H "Content-Type: application/json" -d '{"dataset":"demo","window_minutes":10}'
 curl -s -H "$H" "http://127.0.0.1:8000/v1/data-quality/demo"
 curl -s -H "$H" "http://127.0.0.1:8000/v1/suggestions/demo?threshold=0.75"
+
+# Upload — creates the dataset if it does not exist. `kind` only picks the
+# subfolder; files are identified by content, so a misfiled statement still parses.
+curl -s -H "$H" -X POST http://127.0.0.1:8000/v1/upload/mycase \
+  -F "kind=bank" -F "files=@statement.csv" -F "files=@calls.csv"
 ```
+
+Every submitted file comes back as `stored` or `rejected` with a reason — nothing is
+silently dropped. Accepted types: `csv txt xlsx xls pdf docx zip`. Caps are
+`ERAKSHAK_MAX_UPLOAD_MB` (256) and `ERAKSHAK_MAX_UPLOAD_FILES` (200). A successful
+upload invalidates the memoised analysis, so the next `/v1/analyze` re-reads disk.
 
 ### Natural-language query (F1)
 
@@ -554,8 +566,9 @@ Notes worth knowing:
 
 Honest list — these are **not** bugs to report:
 
-- **No HTTP file upload.** The API has no upload route; the React "Upload & Ingest" page
-  says so. Use the Streamlit uploader, or drop files into `datasets/raw/<name>/`.
+- **Upload has no per-file progress bar.** `POST /v1/upload/{ds}` streams to disk and
+  reports each file's outcome, but the UI shows one spinner for the batch rather than a
+  percentage per file. Large uploads look idle while they are working.
 - **The three newest endpoints have no UI yet.** `/v1/data-quality`, `/v1/suggestions` and
   `/v1/query` are implemented and typed in `frontend/src/lib/api.ts`, but no React screen
   calls them. Use Streamlit, `/docs`, or curl. The Streamlit **🧪 Quality** and **🗣️ Ask**

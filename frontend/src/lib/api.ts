@@ -261,6 +261,30 @@ export type NlQueryResponse = {
   spec: QuerySpec | null;
 };
 
+export type UploadKind = "bank" | "cdr" | "ipdr" | "other";
+
+/**
+ * Per-file outcome. Every submitted file comes back with a status — a rejected
+ * file is never silently dropped, because "what I uploaded" and "what the system
+ * holds" have to be the same set for the evidence to mean anything.
+ */
+export type UploadFileResult = {
+  file: string;
+  status: "stored" | "rejected";
+  bytes?: number;
+  path?: string;
+  reason?: string;
+};
+
+export type UploadResponse = {
+  dataset: string;
+  kind: UploadKind;
+  accepted: number;
+  rejected: number;
+  bytes: number;
+  files: UploadFileResult[];
+};
+
 export const api = {
   baseUrl: API_BASE,
 
@@ -332,6 +356,22 @@ export const api = {
       limit: String(limit),
     });
     return request<SuggestionsResponse>(`/v1/suggestions/${encodeURIComponent(dataset)}?${q}`);
+  },
+
+  /**
+   * Upload evidence files into datasets/raw/{dataset}/{kind}/.
+   *
+   * Deliberately does NOT set Content-Type — the browser must add the multipart
+   * boundary itself, and setting it by hand produces a body the server cannot parse.
+   */
+  upload(dataset: string, files: File[], kind: UploadKind = "other") {
+    const body = new FormData();
+    for (const f of files) body.append("files", f);
+    body.set("kind", kind);
+    return request<UploadResponse>(`/v1/upload/${encodeURIComponent(dataset)}`, {
+      method: "POST",
+      body,
+    });
   },
 
   query(dataset: string, q: string, windowMinutes = 10, engine?: "llm" | "rules") {
