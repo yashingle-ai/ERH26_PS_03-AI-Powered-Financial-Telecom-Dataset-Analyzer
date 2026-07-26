@@ -6,10 +6,26 @@ services:
     command: uvicorn backend.app.api.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
+    # Seed credentials and the JWT secret. Unset, the API generates a random
+    # password and logs it once — fine locally, useless behind compose where
+    # nobody reads the log. Set them in .env; never commit real values.
+    environment:
+      ERAKSHAK_JWT_SECRET: ${ERAKSHAK_JWT_SECRET:-dev-only-change-me}
+      ERAKSHAK_ANALYST_PASSWORD: ${ERAKSHAK_ANALYST_PASSWORD:-analyst}
+      ERAKSHAK_ADMIN_PASSWORD: ${ERAKSHAK_ADMIN_PASSWORD:-admin}
+      # Natural-language query. Absent, /v1/query falls back to the offline
+      # rule-based engine — the API never hard-depends on network access.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./datasets:/app/datasets
       - ./data:/app/data
       - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   dashboard:
     build: .
@@ -20,6 +36,12 @@ services:
       - ./datasets:/app/datasets
       - ./data:/app/data
       - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
   # Optional relational store (scale-triggered). Not required for the prototype.
   # postgres:

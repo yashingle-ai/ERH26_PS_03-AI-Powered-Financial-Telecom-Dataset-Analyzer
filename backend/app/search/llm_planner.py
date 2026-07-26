@@ -11,9 +11,10 @@ That split is the SR-R4 mitigation from `research/10_risk_analysis.md` and the d
 `research/07_architecture_planning.md` chose: "LLM emits a validated structured DSL, never
 raw SQL". `_assert_no_case_data` enforces it at runtime rather than trusting the caller.
 
-Model: `gemini-2.5-flash` — a free-tier model. Translating one question into a small JSON
-object with enum-constrained fields is an easy task, so the larger tiers buy nothing here
-and cost quota. Set GEMINI_MODEL to override (`gemini-2.5-flash-lite` is lighter still).
+Model: `gemini-flash-lite-latest` — a free-tier model. Translating one question into a
+small JSON object with enum-constrained fields is an easy task, so the larger tiers buy
+nothing here and cost quota. Set GEMINI_MODEL to override (`gemini-flash-latest` is the
+next step up). See DEFAULT_MODEL below for why the floating alias is deliberate.
 
 Without an API key this module returns None and the API falls back to the offline
 rule-based interpreter, so the system never hard-depends on network access — which matters
