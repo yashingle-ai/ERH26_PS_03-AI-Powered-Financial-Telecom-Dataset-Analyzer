@@ -126,6 +126,29 @@ def test_existing_file_is_never_overwritten(client, auth, sandbox):
     assert (sandbox / "case5" / "other" / "dup.csv").read_bytes() == b"a,b\n1,2\n"
 
 
+@pytest.mark.parametrize("ds", ["demo", "smoke", "DEMO", "Smoke"])
+def test_upload_into_a_bundled_fixture_dataset_is_refused(client, auth, sandbox, ds):
+    """demo/ and smoke/ are the only paths under datasets/ that git tracks.
+
+    An upload there mixes real evidence into a tracked directory where a later
+    `git add -A` would commit it, and no ignore pattern can distinguish an
+    uploaded statement from a fixture one — both are a .csv in bank/. This
+    actually happened: 711 real case files landed in datasets/raw/smoke/other/
+    because the UI prefilled the active dataset name.
+    """
+    r = client.post(f"/v1/upload/{ds}", files=[_csv()], headers=auth)
+    assert r.status_code == 409, r.text
+    assert "read-only" in r.json()["error"]["message"]
+    assert not (sandbox / ds / "other").exists()
+
+
+def test_fixture_datasets_remain_readable(sandbox):
+    """The guard blocks writes only — analysing the samples must still work."""
+    from backend.app.api.main import _dataset_dir
+    (sandbox / "demo").mkdir()
+    assert _dataset_dir("demo").is_dir()          # read path: allowed
+
+
 def test_bad_kind_refused(client, auth, sandbox):
     r = client.post("/v1/upload/case6", files=[_csv()], data={"kind": "../evil"}, headers=auth)
     assert r.status_code == 400

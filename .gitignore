@@ -36,6 +36,12 @@ datasets/*
 !datasets/entity_map.template.csv
 
 datasets/raw/*
+# These two are the ONLY tracked paths under datasets/, so anything written into
+# them is committable — including uploaded evidence, which no pattern here can
+# distinguish from a fixture (both are a .csv in bank/). /v1/upload therefore
+# refuses these two dataset names outright; see FIXTURE_DATASETS in
+# backend/app/api/main.py. Real case files landed in datasets/raw/smoke/other/
+# once already, before that guard existed.
 !datasets/raw/demo/
 !datasets/raw/smoke/
 

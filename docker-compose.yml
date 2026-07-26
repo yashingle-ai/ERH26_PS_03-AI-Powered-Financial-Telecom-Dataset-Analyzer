@@ -6,22 +6,21 @@ services:
     command: uvicorn backend.app.api.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
-    # Passed through from .env, with NO fallback value on purpose. Unset, the API
-    # generates a random password per boot and logs it once; a `:-analyst` default
-    # here would silently replace that with a known credential, which is worse than
-    # having none. Recover a generated password with:
-    #     docker compose logs api | grep "generated a random"
-    environment:
-      ERAKSHAK_JWT_SECRET: ${ERAKSHAK_JWT_SECRET:-}
-      ERAKSHAK_ANALYST_PASSWORD: ${ERAKSHAK_ANALYST_PASSWORD:-}
-      ERAKSHAK_ADMIN_PASSWORD: ${ERAKSHAK_ADMIN_PASSWORD:-}
-      # Natural-language query. Absent, /v1/query falls back to the offline
-      # rule-based engine — the API never hard-depends on network access.
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      # Upload limits. Real case folders run to hundreds of files, so the
-      # library defaults are low for anything but a demo dataset.
-      ERAKSHAK_MAX_UPLOAD_FILES: ${ERAKSHAK_MAX_UPLOAD_FILES:-200}
-      ERAKSHAK_MAX_UPLOAD_MB: ${ERAKSHAK_MAX_UPLOAD_MB:-256}
+    # Inject the whole of .env, rather than naming variables one at a time.
+    #
+    # Compose reads .env for *substitution* but does not pass it to containers, so
+    # an enumerated `environment:` block silently ignores anything not listed —
+    # ERAKSHAK_TOKEN_TTL_MIN was set in .env and had no effect for exactly this
+    # reason. Every new setting would have to be added in two places, and
+    # forgetting the second fails quietly. See .env.example for the variables.
+    #
+    # Nothing is defaulted here on purpose: unset, the API generates a random
+    # password per boot and logs it once. A `:-analyst` fallback would replace
+    # that with a known credential, which is worse than having none. Recover it
+    # with:  docker compose logs api | grep "generated a random"
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./datasets:/app/datasets
       - ./data:/app/data
@@ -38,6 +37,9 @@ services:
     command: streamlit run backend/app/dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
     ports:
       - "8501:8501"
+    env_file:                      # same settings as the API — see the note above
+      - path: .env
+        required: false
     volumes:
       - ./datasets:/app/datasets
       - ./data:/app/data

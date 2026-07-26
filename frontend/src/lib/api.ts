@@ -1,4 +1,4 @@
-import { clearSession, getToken } from "@/lib/auth";
+import { clearSession, getToken, getUsername, secondsUntilExpiry, setSession } from "@/lib/auth";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "")
   || "http://127.0.0.1:8000";
@@ -20,12 +20,62 @@ type RequestOptions = {
   body?: BodyInit | null;
   auth?: boolean;
   headers?: Record<string, string>;
+  /**
+   * Renew the token unless at least this many seconds remain. Set it above the
+   * expected duration of a slow call so the token cannot expire mid-flight.
+   */
+  minTokenSeconds?: number;
 };
+
+/**
+ * Renew the token when it is close to expiring.
+ *
+ * Analysing a real case takes ~10 minutes and an analyst reads the results for
+ * much longer, so a fixed-lifetime token runs out mid-session. Renewing before
+ * each call — rather than reacting to a 401 — means a long-running request is
+ * never started on a token that will expire while it is in flight.
+ *
+ * `minRemaining` is raised for known-slow calls so the token outlives the request.
+ */
+const REFRESH_MARGIN_S = 120;
+const REFRESH_COOLDOWN_MS = 30_000;
+let refreshInFlight: Promise<void> | null = null;
+let lastRefreshAt = 0;
+
+async function ensureFreshToken(minRemaining = REFRESH_MARGIN_S): Promise<void> {
+  const left = secondsUntilExpiry();
+  if (left === null || left > minRemaining) return;
+  if (left <= 0) return;             // already dead — only a fresh login helps
+  if (refreshInFlight) return refreshInFlight;
+  // If the server's TTL is shorter than a slow call needs, a fresh token still
+  // won't clear the bar — without this, every request would refresh forever.
+  // Renew at most once per cooldown and let the request proceed regardless.
+  if (Date.now() - lastRefreshAt < REFRESH_COOLDOWN_MS) return;
+  lastRefreshAt = Date.now();
+
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/auth/refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) return;           // let the real request surface the failure
+      const data = (await res.json()) as TokenResponse;
+      if (data?.access_token) setSession(data.access_token, getUsername() || "");
+    } catch {
+      /* offline or server down — the request below reports it properly */
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { ...(opts.headers || {}) };
   const auth = opts.auth !== false;
   if (auth) {
+    await ensureFreshToken(opts.minTokenSeconds);
     const token = getToken();
     if (!token) throw new ApiError(401, "Not signed in");
     headers.Authorization = `Bearer ${token}`;
@@ -312,6 +362,10 @@ export const api = {
     return request<AnalyzeResponse>("/v1/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // A real case with PDFs takes ~10 minutes to parse. Losing that run to an
+      // expiry that was already visible before the request started is the worst
+      // possible failure, so demand a token that will outlast it.
+      minTokenSeconds: 20 * 60,
       body: JSON.stringify({
         dataset,
         window_minutes: windowMinutes,
@@ -370,6 +424,7 @@ export const api = {
     body.set("kind", kind);
     return request<UploadResponse>(`/v1/upload/${encodeURIComponent(dataset)}`, {
       method: "POST",
+      minTokenSeconds: 10 * 60,   // hundreds of files / several hundred MB
       body,
     });
   },

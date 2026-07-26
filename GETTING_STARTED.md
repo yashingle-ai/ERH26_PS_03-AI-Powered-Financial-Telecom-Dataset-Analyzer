@@ -527,6 +527,12 @@ Two things it does deliberately:
 Then in the UI: **Upload & Ingest** → type the dataset name → pick the kind → drag that
 kind's folder → **Upload** → repeat per kind → **Run pipeline**.
 
+> **`demo` and `smoke` reject uploads (409).** They are the only two paths under
+> `datasets/` that git tracks, so real evidence uploaded there would sit in a tracked
+> directory waiting for a `git add -A` — and no ignore pattern can tell an uploaded
+> statement from a fixture one, since both are a `.csv` in `bank/`. Give your case its
+> own name. Reading and analysing the samples is unaffected.
+
 Folders larger than `ERAKSHAK_MAX_UPLOAD_FILES` (default 200) need more than one drag;
 the staging report prints the batch count. Raise it in `.env` if you would rather do it
 in one go.

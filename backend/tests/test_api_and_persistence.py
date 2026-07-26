@@ -39,6 +39,43 @@ def test_bad_login_rejected(client):
     assert r.status_code == 401
 
 
+def test_refresh_issues_a_new_usable_token(client):
+    """Analysing a real case takes ~10 min; a session must be renewable."""
+    r = client.post("/v1/auth/token", data={"username": "admin", "password": "adminpass"})
+    first = r.json()["access_token"]
+
+    r2 = client.post("/v1/auth/refresh", headers={"Authorization": f"Bearer {first}"})
+    assert r2.status_code == 200, r2.text
+    second = r2.json()["access_token"]
+
+    # The new token must actually work on a protected route.
+    assert client.get("/v1/datasets", headers={"Authorization": f"Bearer {second}"}).status_code == 200
+
+
+def test_refresh_preserves_roles(client):
+    """A refreshed token must not silently widen or drop privileges."""
+    import jwt
+
+    from backend.app.api import security
+    tok = client.post("/v1/auth/token",
+                      data={"username": "admin", "password": "adminpass"}).json()["access_token"]
+    new = client.post("/v1/auth/refresh",
+                      headers={"Authorization": f"Bearer {tok}"}).json()["access_token"]
+    before = jwt.decode(tok, security._secret(), algorithms=[security.ALGORITHM])
+    after = jwt.decode(new, security._secret(), algorithms=[security.ALGORITHM])
+    assert after["sub"] == before["sub"]
+    assert sorted(after["roles"]) == sorted(before["roles"])
+
+
+def test_refresh_rejects_an_invalid_token(client):
+    r = client.post("/v1/auth/refresh", headers={"Authorization": "Bearer not-a-token"})
+    assert r.status_code == 401
+
+
+def test_refresh_requires_a_token(client):
+    assert client.post("/v1/auth/refresh").status_code == 401
+
+
 def test_generated_password_is_logged_at_boot_not_first_login(monkeypatch, caplog):
     """A generated credential must reach the log on startup.
 

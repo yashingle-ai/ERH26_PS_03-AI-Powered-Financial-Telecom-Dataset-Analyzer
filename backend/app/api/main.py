@@ -38,6 +38,7 @@ from backend.app import pipeline
 from backend.app.api.security import (
     authenticate_user,
     create_access_token,
+    get_current_user,
     initialise_auth,
     require_role,
 )
@@ -249,6 +250,21 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": token, "token_type": "bearer"}
 
 
+@v1.post("/auth/refresh")
+def refresh(user=Depends(get_current_user)):
+    """Exchange a still-valid token for a fresh one.
+
+    Analysing a real case takes minutes, and an analyst reads results for far
+    longer. Without this, a fixed-lifetime token expires mid-investigation and the
+    UI drops them at the login screen — losing an in-flight run rather than any
+    security being gained. No role gate: renewing is not a privileged action, and
+    the roles carried over are the ones already in the presented token.
+    """
+    token = create_access_token(user["username"], user["roles"])
+    audit("token_refresh", user=user["username"])
+    return {"access_token": token, "token_type": "bearer"}
+
+
 # ---- protected data endpoints ----
 @v1.get("/datasets")
 def datasets(user=Depends(require_role("analyst"))):
@@ -267,11 +283,25 @@ _CHUNK = 1024 * 1024
 #: than escaped, so there is no encoding for a caller to slip through.
 _SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+#: Fixture datasets that ship in the repository, and are therefore the only two
+#: paths under datasets/ that .gitignore allowlists. Uploading into them mixes real
+#: evidence into a tracked directory, where a later `git add -A` would commit it —
+#: and no ignore pattern can tell an uploaded statement from a fixture one, since
+#: both are a .csv in the same bank/ folder. Refuse the write instead.
+FIXTURE_DATASETS = frozenset({"demo", "smoke"})
 
-def _dataset_dir(ds: str, *, create: bool = False) -> Path:
+
+def _dataset_dir(ds: str, *, create: bool = False, writable: bool = False) -> Path:
     """Resolve a dataset directory, refusing anything that escapes DATASETS."""
     if not _SAFE_DATASET.match(ds) or ".." in ds:
         raise HTTPException(400, "invalid dataset name: use letters, digits, . _ - (max 64)")
+    if writable and ds.lower() in FIXTURE_DATASETS:
+        raise HTTPException(
+            409,
+            f"'{ds}' is a read-only sample dataset that ships with the repository. "
+            "Use a new name for your case (e.g. 'fir-65-2024') so real evidence is "
+            "never written into a tracked directory.",
+        )
     path = (DATASETS / ds).resolve()
     # Defence in depth: the regex already excludes separators, but a symlinked
     # datasets/raw would still be a way out. Verify the resolved path, not the input.
@@ -333,7 +363,7 @@ async def upload(ds: str,
     if len(files) > _MAX_UPLOAD_FILES:
         raise HTTPException(413, f"too many files in one request (max {_MAX_UPLOAD_FILES})")
 
-    target = _dataset_dir(ds, create=True) / kind
+    target = _dataset_dir(ds, create=True, writable=True) / kind
     target.mkdir(parents=True, exist_ok=True)
 
     results, accepted, total_bytes = [], 0, 0

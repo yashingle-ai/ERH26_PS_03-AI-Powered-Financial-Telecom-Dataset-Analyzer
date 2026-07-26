@@ -27,6 +27,10 @@ const stages = [
  *  offer a type the server will reject. */
 const ACCEPT = ".csv,.txt,.xlsx,.xls,.pdf,.docx,.zip";
 
+/** Mirrors FIXTURE_DATASETS on the API — sample data that ships in the repo and
+ *  is tracked by git, so uploads into it are refused server-side. */
+const FIXTURE_DATASETS = new Set(["demo", "smoke"]);
+
 const KINDS: { id: UploadKind; label: string; hint: string }[] = [
   { id: "bank", label: "Bank", hint: "statements" },
   { id: "cdr", label: "CDR", hint: "call records" },
@@ -56,7 +60,14 @@ function UploadPage() {
   const [stage, setStage] = useState(0);
   const [summary, setSummary] = useState<string | null>(null);
   const { dataset, setDataset, windowMinutes } = useInvestigation();
-  const [target, setTarget] = useState(dataset || "");
+  // Do NOT prefill with a sample dataset. Prefilling the active dataset means a
+  // drag-and-upload without editing the name writes a real case into `demo` or
+  // `smoke` — the two paths under datasets/ that are tracked by git. The API
+  // refuses those names outright; leaving the field empty stops the user being
+  // led into the error in the first place.
+  const [target, setTarget] = useState(
+    dataset && !FIXTURE_DATASETS.has(dataset.toLowerCase()) ? dataset : "",
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
 
@@ -139,6 +150,7 @@ function UploadPage() {
     }
   }, [target, dataset, windowMinutes, qc]);
 
+  const isFixtureTarget = FIXTURE_DATASETS.has(target.trim().toLowerCase());
   const queuedBytes = queued.reduce((a, f) => a + f.size, 0);
   const stored = results?.filter((r) => r.status === "stored").length ?? 0;
   const rejected = results?.filter((r) => r.status === "rejected").length ?? 0;
@@ -165,7 +177,15 @@ function UploadPage() {
             Dataset (new or existing)
           </label>
           <Input id="ds" value={target} placeholder="e.g. fir-65-2024"
-                 onChange={(e) => setTarget(e.target.value)} className="h-9 max-w-sm" />
+                 onChange={(e) => setTarget(e.target.value)} className="h-9 max-w-sm"
+                 aria-invalid={isFixtureTarget || undefined} />
+          {isFixtureTarget && (
+            <p className="mt-1 max-w-sm text-xs text-[color:var(--risk-high)]">
+              <b>{target}</b> is read-only sample data that ships with the repo and is
+              tracked by git. Name your case something else so real evidence is never
+              written into a tracked folder.
+            </p>
+          )}
         </div>
         <div>
           <span className="text-mono mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
@@ -206,7 +226,8 @@ function UploadPage() {
             <Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>
               Browse files
             </Button>
-            <Button size="sm" onClick={doUpload} disabled={uploading || !queued.length} className="gap-2">
+            <Button size="sm" onClick={doUpload}
+                    disabled={uploading || !queued.length || isFixtureTarget} className="gap-2">
               {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {uploading ? "Uploading…" : `Upload ${queued.length || ""}`.trim()}
             </Button>
