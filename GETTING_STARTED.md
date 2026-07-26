@@ -20,6 +20,7 @@ If you only have five minutes, do [Quick start](#quick-start) then
 - [Journey 4: the API directly](#journey-4-the-api-directly)
 - [Feature test checklist](#feature-test-checklist)
 - [Running the test suites / CI locally](#running-the-test-suites--ci-locally)
+- [Uploading a real case folder](#uploading-a-real-case-folder)
 - [Working with your own data](#working-with-your-own-data)
 - [Troubleshooting](#troubleshooting)
 - [Known gaps](#known-gaps)
@@ -494,6 +495,56 @@ Notes worth knowing:
   may not be able to write to `data/` or `config/`. Either `sudo chown -R 10001:10001
   data config`, or run as yourself with `user: "${UID}:${GID}"` on the service. Docker
   Desktop on Windows and macOS is unaffected — mounts there ignore ownership.
+
+---
+
+## Uploading a real case folder
+
+A real case folder is not shaped like something you can hand to a browser: nested
+dozens of levels deep, mixing evidence the pipeline reads with CCTV and photographs,
+and repeating filenames like `statement.csv` across a dozen bank subfolders.
+
+`scripts/stage_for_upload.py` flattens the readable subset into `<kind>/` folders you
+can drag straight into the Upload page:
+
+```bash
+python scripts/stage_for_upload.py "datasets/FIR 65-2024" --dry-run   # report only
+python scripts/stage_for_upload.py "datasets/FIR 65-2024"             # copy
+```
+
+Output lands in `datasets/upload-ready/<case>/{bank,cdr,ipdr,other}/` — gitignored and
+dockerignored like everything under `datasets/`.
+
+Two things it does deliberately:
+
+- **The source path is folded into the filename** (`bank__AXIS__stmt.csv`). `source_file`
+  is what appears in the provenance of every event derived from that file — a flattened
+  `stmt.csv` that could have come from any of twelve banks is not evidence.
+- **Every skipped file is counted and reported by reason** — unsupported types, legacy
+  `.doc`, files over the size cap. A staging step that quietly loses evidence is worse
+  than none, because the gap is invisible downstream.
+
+Then in the UI: **Upload & Ingest** → type the dataset name → pick the kind → drag that
+kind's folder → **Upload** → repeat per kind → **Run pipeline**.
+
+Folders larger than `ERAKSHAK_MAX_UPLOAD_FILES` (default 200) need more than one drag;
+the staging report prints the batch count. Raise it in `.env` if you would rather do it
+in one go.
+
+> **Parsing a real case takes minutes, not seconds.** FIR 65-2024 — 505 staged files,
+> 334 MB — uploads in about 12 s but takes **~9½ minutes** to analyse, because ~195 PDFs
+> are parsed page by page. The API holds the connection open; it has not hung.
+
+Measured on that case, so you can tell a working run from a broken one:
+
+| | |
+|---|---|
+| Files parsed | 929 (ZIPs expand to more files than you uploaded) |
+| Events | 204,911 |
+| Transactions / calls | 1,800 / 203,046 |
+| Entities | 4,144 |
+| Rejected rows | 174,062 across 892 entries — surfaced in **Data Quality**, not hidden |
+| **Correlation hits** | **0** — expected. See [G5](docs/GAP_ANALYSIS_REAL_DATA.md): no entity carries both an account and a phone, so there is nothing to correlate across. Not a bug in the correlator |
 
 ---
 

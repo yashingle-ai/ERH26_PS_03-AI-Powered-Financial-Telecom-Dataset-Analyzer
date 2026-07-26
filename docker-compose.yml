@@ -18,6 +18,10 @@ services:
       # Natural-language query. Absent, /v1/query falls back to the offline
       # rule-based engine — the API never hard-depends on network access.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Upload limits. Real case folders run to hundreds of files, so the
+      # library defaults are low for anything but a demo dataset.
+      ERAKSHAK_MAX_UPLOAD_FILES: ${ERAKSHAK_MAX_UPLOAD_FILES:-200}
+      ERAKSHAK_MAX_UPLOAD_MB: ${ERAKSHAK_MAX_UPLOAD_MB:-256}
     volumes:
       - ./datasets:/app/datasets
       - ./data:/app/data
