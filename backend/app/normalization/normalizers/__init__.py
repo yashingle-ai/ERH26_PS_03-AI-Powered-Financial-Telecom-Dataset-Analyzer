@@ -63,13 +63,25 @@ def ip(value) -> str | None:
     return v or None
 
 
+#: Core-banking exports (Finacle/ICORE, and anything routed through SAS) write
+#: `11DEC2019:09:07:02` — a date and time joined by a colon. dateutil parses the
+#: date half alone but chokes on the whole string, so every row in such a file was
+#: dropped for "missing timestamp" even though the value was perfectly good.
+_SAS_DATETIME = re.compile(
+    r"^(\d{1,2}[A-Za-z]{3}\d{2,4}):(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)$"
+)
+
+
 def parse_dt(value, source_tz: str = "IST") -> datetime | None:
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
         dt = value
     else:
-        s = str(value).strip()
+        s = str(value).strip().strip("'\"")
+        m = _SAS_DATETIME.match(s)
+        if m:
+            s = f"{m.group(1)} {m.group(2)}"      # -> "11DEC2019 09:07:02"
         # ISO (yyyy-mm-dd...) must NOT use dayfirst or dateutil swaps month/day.
         # dd/mm/yyyy (Indian bank statements) requires dayfirst=True.
         iso_like = bool(re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", s))
