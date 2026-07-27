@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
@@ -103,11 +104,48 @@ async def unhandled_handler(request: Request, exc: Exception):
 
 
 @lru_cache(maxsize=8)
-def _analyze(ds: str, window: int):
+def _analyze_uncoordinated(ds: str, window: int):
     path = DATASETS / ds
     if not path.is_dir() or "/" in ds or ".." in ds:  # basic path-safety
         raise HTTPException(404, f"dataset '{ds}' not found")
     return pipeline.run(str(path), window_minutes=window)
+
+
+#: One lock per (dataset, window). See _analyze.
+_analyze_locks: dict[tuple[str, int], threading.Lock] = {}
+_analyze_locks_guard = threading.Lock()
+
+
+def _analyze(ds: str, window: int):
+    """Run the pipeline for a dataset, at most once at a time per key.
+
+    lru_cache only memoises *completed* calls, so concurrent identical requests
+    each miss the cache and each run the whole pipeline. That is fine for the
+    synthetic fixtures and ruinous for a real case: six overlapping runs of a
+    676 MB dataset drove the container to 6.4 of 7.6 GiB and 104% CPU, and the
+    UI can easily produce them — several routes query analyze, and a retry or an
+    impatient second click adds more.
+
+    Serialising on the key means the first caller computes and the rest wait and
+    then hit the warm cache. Requests run on FastAPI's threadpool (these are
+    sync defs), so blocking here holds a worker but does not stall the loop.
+    """
+    key = (ds, window)
+    with _analyze_locks_guard:
+        lock = _analyze_locks.setdefault(key, threading.Lock())
+    if not lock.acquire(blocking=False):
+        log.info("analyze(%s, w=%s) already running — waiting for it instead of "
+                 "starting a second run", ds, window)
+        lock.acquire()
+    try:
+        return _analyze_uncoordinated(ds, window)
+    finally:
+        lock.release()
+
+
+# `_analyze.cache_clear` is called after an upload; keep that surface working now
+# that the memoised function is wrapped.
+_analyze.cache_clear = _analyze_uncoordinated.cache_clear
 
 
 class AnalyzeRequest(BaseModel):

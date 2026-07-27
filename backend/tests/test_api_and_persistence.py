@@ -39,6 +39,49 @@ def test_bad_login_rejected(client):
     assert r.status_code == 401
 
 
+def test_concurrent_analyze_runs_the_pipeline_once(monkeypatch):
+    """Seven endpoints call _analyze; one page load can fire five at once.
+
+    lru_cache memoises only completed calls, so without a per-key lock each
+    concurrent request runs the whole pipeline. On a 676 MB real case that drove
+    the container to 6.4 of 7.6 GiB and 104% CPU.
+    """
+    import threading
+    import time
+
+    from backend.app.api import main
+
+    calls = []
+
+    def slow_run(path, window_minutes=10):
+        calls.append(path)
+        time.sleep(0.3)                      # long enough for the others to pile in
+        return f"result:{path}:{window_minutes}"
+
+    monkeypatch.setattr(main.pipeline, "run", slow_run)
+    monkeypatch.setattr(main.Path, "is_dir", lambda self: True)
+    main._analyze.cache_clear()
+
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(main._analyze("ds", 10)))
+               for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(calls) == 1, f"pipeline ran {len(calls)} times for one key"
+    assert len(results) == 6 and len(set(results)) == 1   # all six got the same object
+    main._analyze.cache_clear()
+
+
+def test_analyze_cache_clear_still_reachable_through_the_wrapper():
+    """Upload calls _analyze.cache_clear(); wrapping must not hide it."""
+    from backend.app.api import main
+    assert callable(main._analyze.cache_clear)
+    main._analyze.cache_clear()              # must not raise
+
+
 def test_refresh_issues_a_new_usable_token(client):
     """Analysing a real case takes ~10 min; a session must be renewable."""
     r = client.post("/v1/auth/token", data={"username": "admin", "password": "adminpass"})

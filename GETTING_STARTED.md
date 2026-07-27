@@ -500,6 +500,12 @@ Notes worth knowing:
 
 ## Uploading a real case folder
 
+> **The two real cases are already set up.** `fir-65-2024` and `fir-0006-2025-u` sit in
+> `datasets/raw/` and appear in the dataset dropdown alongside `demo` and `smoke` —
+> select one and run. `demo`/`smoke` are small synthetic fixtures for testing the UI;
+> the two FIR datasets are the actual evidence. Everything below is only needed to
+> stage a *new* case.
+
 A real case folder is not shaped like something you can hand to a browser: nested
 dozens of levels deep, mixing evidence the pipeline reads with CCTV and photographs,
 and repeating filenames like `statement.csv` across a dozen bank subfolders.
@@ -513,7 +519,9 @@ python scripts/stage_for_upload.py "datasets/FIR 65-2024"             # copy
 ```
 
 Output lands in `datasets/upload-ready/<case>/{bank,cdr,ipdr,other}/` — gitignored and
-dockerignored like everything under `datasets/`.
+dockerignored like everything under `datasets/`. Move that folder to
+`datasets/raw/<case>/` to make it selectable in the UI directly, or upload it through
+the Upload page if the files are on a different machine from the API.
 
 Two things it does deliberately:
 
