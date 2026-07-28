@@ -16,11 +16,13 @@ import { Route as AppUploadRouteImport } from './routes/_app.upload'
 import { Route as AppTimelineRouteImport } from './routes/_app.timeline'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppReportsRouteImport } from './routes/_app.reports'
+import { Route as AppQualityRouteImport } from './routes/_app.quality'
 import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppNetworkRouteImport } from './routes/_app.network'
 import { Route as AppInvestigationsRouteImport } from './routes/_app.investigations'
 import { Route as AppEntitiesRouteImport } from './routes/_app.entities'
 import { Route as AppDetectionsRouteImport } from './routes/_app.detections'
+import { Route as AppAskRouteImport } from './routes/_app.ask'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -56,6 +58,11 @@ const AppReportsRoute = AppReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => AppRoute,
 } as any)
+const AppQualityRoute = AppQualityRouteImport.update({
+  id: '/quality',
+  path: '/quality',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOverviewRoute = AppOverviewRouteImport.update({
   id: '/overview',
   path: '/overview',
@@ -81,15 +88,22 @@ const AppDetectionsRoute = AppDetectionsRouteImport.update({
   path: '/detections',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAskRoute = AppAskRouteImport.update({
+  id: '/ask',
+  path: '/ask',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/ask': typeof AppAskRoute
   '/detections': typeof AppDetectionsRoute
   '/entities': typeof AppEntitiesRoute
   '/investigations': typeof AppInvestigationsRoute
   '/network': typeof AppNetworkRoute
   '/overview': typeof AppOverviewRoute
+  '/quality': typeof AppQualityRoute
   '/reports': typeof AppReportsRoute
   '/settings': typeof AppSettingsRoute
   '/timeline': typeof AppTimelineRoute
@@ -98,11 +112,13 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/ask': typeof AppAskRoute
   '/detections': typeof AppDetectionsRoute
   '/entities': typeof AppEntitiesRoute
   '/investigations': typeof AppInvestigationsRoute
   '/network': typeof AppNetworkRoute
   '/overview': typeof AppOverviewRoute
+  '/quality': typeof AppQualityRoute
   '/reports': typeof AppReportsRoute
   '/settings': typeof AppSettingsRoute
   '/timeline': typeof AppTimelineRoute
@@ -113,11 +129,13 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/_app/ask': typeof AppAskRoute
   '/_app/detections': typeof AppDetectionsRoute
   '/_app/entities': typeof AppEntitiesRoute
   '/_app/investigations': typeof AppInvestigationsRoute
   '/_app/network': typeof AppNetworkRoute
   '/_app/overview': typeof AppOverviewRoute
+  '/_app/quality': typeof AppQualityRoute
   '/_app/reports': typeof AppReportsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/timeline': typeof AppTimelineRoute
@@ -128,11 +146,13 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/ask'
     | '/detections'
     | '/entities'
     | '/investigations'
     | '/network'
     | '/overview'
+    | '/quality'
     | '/reports'
     | '/settings'
     | '/timeline'
@@ -141,11 +161,13 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/ask'
     | '/detections'
     | '/entities'
     | '/investigations'
     | '/network'
     | '/overview'
+    | '/quality'
     | '/reports'
     | '/settings'
     | '/timeline'
@@ -155,11 +177,13 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/login'
+    | '/_app/ask'
     | '/_app/detections'
     | '/_app/entities'
     | '/_app/investigations'
     | '/_app/network'
     | '/_app/overview'
+    | '/_app/quality'
     | '/_app/reports'
     | '/_app/settings'
     | '/_app/timeline'
@@ -223,6 +247,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppReportsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/quality': {
+      id: '/_app/quality'
+      path: '/quality'
+      fullPath: '/quality'
+      preLoaderRoute: typeof AppQualityRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/overview': {
       id: '/_app/overview'
       path: '/overview'
@@ -258,15 +289,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDetectionsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/ask': {
+      id: '/_app/ask'
+      path: '/ask'
+      fullPath: '/ask'
+      preLoaderRoute: typeof AppAskRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAskRoute: typeof AppAskRoute
   AppDetectionsRoute: typeof AppDetectionsRoute
   AppEntitiesRoute: typeof AppEntitiesRoute
   AppInvestigationsRoute: typeof AppInvestigationsRoute
   AppNetworkRoute: typeof AppNetworkRoute
   AppOverviewRoute: typeof AppOverviewRoute
+  AppQualityRoute: typeof AppQualityRoute
   AppReportsRoute: typeof AppReportsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTimelineRoute: typeof AppTimelineRoute
@@ -274,11 +314,13 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAskRoute: AppAskRoute,
   AppDetectionsRoute: AppDetectionsRoute,
   AppEntitiesRoute: AppEntitiesRoute,
   AppInvestigationsRoute: AppInvestigationsRoute,
   AppNetworkRoute: AppNetworkRoute,
   AppOverviewRoute: AppOverviewRoute,
+  AppQualityRoute: AppQualityRoute,
   AppReportsRoute: AppReportsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTimelineRoute: AppTimelineRoute,

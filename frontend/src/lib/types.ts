@@ -10,7 +10,7 @@ export type Case = {
   id: string;
   code: string;
   title: string;
-  status: "ingested" | "analyzing" | "ready";
+  status: "idle" | "analyzing" | "ready" | "error";
   files: { bank: number; cdr: number; ipdr: number };
   entities: number;
   events: number;
@@ -68,6 +68,8 @@ export type CorrelationHit = {
   events: string[];
   delta: string;
   score: number;
+  /** STRONG = FR-9 three-leg; MEDIUM = call+txn only. */
+  tier: "STRONG" | "MEDIUM";
 };
 
 /* ── Detection ────────────────────────────────────────── */

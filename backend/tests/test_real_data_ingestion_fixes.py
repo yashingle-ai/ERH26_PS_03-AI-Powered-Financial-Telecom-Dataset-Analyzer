@@ -320,3 +320,118 @@ def test_multi_table_docx_yields_one_parsedfile_per_table(tmp_path):
     assert [pf.table_index for pf in parsed] == [1, 2]
     values = sorted(r["Account Number"] for pf in parsed for r in pf.records)
     assert values == ["111", "222"]
+
+
+# ── Finacle/IndusInd bulk SOA: FORACID + DEDIT_AMOUNT ──────────────────────────
+# statement bulk.xls (6,975 rows on fir-65-2024) matched bank_generic then lost
+# every row: the account lived in FORACID (not an alias) and debit was misspelled
+# DEDIT_AMOUNT. Timestamp parsed fine — reject reason was "no account".
+
+FINACLE_BULK_CSV = (
+    "FORACID,ACCT_NAME,TRAN_DATE,TRAN_PARTICULAR,DEDIT_AMOUNT,CREDIT_AMOUNT,TRAN_ID\n"
+    "100240778506,BAMBHANIYA A,09-05-24,UPI/CR/okaxis,0,20249,S90294351\n"
+    "100240778506,BAMBHANIYA A,10-05-24,UPI/DR/okaxis,500,0,S90294352\n"
+)
+
+
+def test_finacle_foracid_bulk_statement_survives_normalization(tmp_path):
+    from backend.app.normalization import service as norm
+
+    p = tmp_path / "statement_bulk.csv"
+    p.write_text(FINACLE_BULK_CSV, encoding="utf-8")
+    pf = ing.parse_file(str(p))
+    assert pf.source_type == "BANK"
+    assert len(pf.records) == 2
+
+    events, rejects = norm.normalize_parsed_files([pf])
+    assert len(events) == 2, rejects
+    assert events[0]["primary"] == ("ACCOUNT_NO", "100240778506")
+    assert events[0]["direction"] == "CREDIT" and events[0]["amount"] == 20249.0
+    assert events[1]["direction"] == "DEBIT" and events[1]["amount"] == 500.0
+
+
+# ── Exchange wallet ledger: Time + User ID + signed Amount ─────────────────────
+# wallet_details / BNB reports (6,683 rejected rows) matched bank_generic at 0.25
+# via Description, then every row lost its timestamp because `Time` was not a
+# date alias and `User ID` was not an account alias.
+
+EXCHANGE_LEDGER_CSV = (
+    "Transaction ID,User ID,Currency,Type,Amount,Available,Description,Time\n"
+    "256506709293,1020260104,USDT,Product withdrawal success,-19,0,"
+    "Automatically confirm,2025-04-21 14:04:10\n"
+    "243255041159,1014659199,USDC,Future transfer,0.1082099,0.1082099,"
+    "Clear Zombie users,2025-02-16 21:50:49\n"
+)
+
+
+def test_exchange_wallet_ledger_survives_normalization(tmp_path):
+    from backend.app.normalization import service as norm
+
+    p = tmp_path / "wallet_details.csv"
+    p.write_text(EXCHANGE_LEDGER_CSV, encoding="utf-8")
+    pf = ing.parse_file(str(p))
+    assert pf.source_type == "BANK"
+    assert pf.profile_id in {"crypto_exchange_ledger", "bank_generic"}
+
+    events, rejects = norm.normalize_parsed_files([pf])
+    assert len(events) == 2, (rejects, pf.profile_id, pf.headers)
+    assert events[0]["primary"][0] == "ACCOUNT_NO"
+    assert events[0]["direction"] == "DEBIT" and events[0]["amount"] == 19.0
+    assert events[0]["asset"] == "CRYPTO:USDT"
+    assert events[1]["direction"] == "CREDIT"
+    assert events[1]["asset"] == "CRYPTO:USDC"
+
+
+# ── Tab-separated IPDR range export ────────────────────────────────────────────
+# ipdr__1365.txt is the same schema as the working .xlsx, but tab-delimited.
+# Default comma sep kept the header as one column → unrecognized source, 9/9 lost.
+
+IPDR_TAB_TXT = (
+    "IP\tVALUE\tF DATE\tF TIME\tT DATE\tT TIME\n"
+    "IPV6\t2409:40d2:1328:a31c::1\t20241226\t135728\t20241226\t140128\n"
+    "IPV6\t2409:40d2:132d:b3f8::2\t20241125\t132132\t20241125\t132532\n"
+)
+
+
+def test_tab_separated_ipdr_txt_is_recognized(tmp_path):
+    from backend.app.normalization import service as norm
+
+    p = tmp_path / "ipdr_range.txt"
+    p.write_text(IPDR_TAB_TXT, encoding="utf-8")
+    pf = ing.parse_file(str(p))
+    assert pf.source_type == "IPDR", (pf.source_type, pf.headers, pf.profile_id)
+    assert len(pf.records) == 2
+
+    events, rejects = norm.normalize_parsed_files([pf])
+    assert len(events) == 2, rejects
+    assert events[0]["event_type"] == "IP_SESSION"
+
+
+def test_registered_mobile_survives_country_code_separator():
+    """"Mobile: +91 8180934367" must yield the whole number, not "+91".
+
+    The old digits-only pattern stopped at the first space, so three of four real
+    statements extracted the bare country code. A country code identifies nobody, and
+    each one lost is a lost account-to-phone bridge — the exact link FR-9 needs.
+    """
+    from backend.app.ingestion.service import _extract_identity
+
+    for text, expect in [
+        ("Registered Mobile: +91 8180934367", "+918180934367"),
+        ("Registered Mobile : +91-81809 34367", "+918180934367"),
+        ("Mobile Number: 8180934367", "8180934367"),
+        ("Customer Mobile: 0 8180934367", "08180934367"),
+    ]:
+        got = _extract_identity([], [text])
+        assert got.get("registered_mobile") == expect, f"{text!r} -> {got}"
+
+    # a country code with no number must be refused, not stored
+    assert "registered_mobile" not in _extract_identity([], ["Registered Mobile: +91"])
+    assert "registered_mobile" not in _extract_identity([], ["Registered Mobile: -"])
+
+    # split across grid cells: ["Registered Mobile", "+91", "8180934367"]
+    grid = [["Registered Mobile", "+91", "8180934367"]]
+    assert _extract_identity(grid, []).get("registered_mobile") == "+918180934367"
+
+    # names must be unaffected by the numeric path
+    assert _extract_identity([], ["Account Name: Smita Gawali"]).get("account_holder")

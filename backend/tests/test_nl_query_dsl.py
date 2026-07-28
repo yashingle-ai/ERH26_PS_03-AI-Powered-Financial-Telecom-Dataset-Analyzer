@@ -72,15 +72,108 @@ def inv():
 
 def test_who_did_x_call_most_often(inv):
     """'who did 9702000558 call most often?' — needs group-by, not pattern matching."""
+    from backend.app.search import answer as answer_mod
+
     spec = QuerySpec(
         target=Target.EVENTS,
         filters=[Filter(field=Field_.EVENT_TYPE, op=Op.EQ, value="CALL")],
         group_by=Field_.COUNTERPARTY,
         aggregate=Aggregate.COUNT,
+        explanation="Group calls by counterparty, order by count desc.",
     )
     out = dsl.execute(spec, inv)
     assert out["rows"][0]["key"] == "PHONE:+919876543210"
     assert out["rows"][0]["count"] == 2
+
+    plain = answer_mod.compose_answer(spec, out)
+    # Investigator-facing answer — not the plan description.
+    assert "Most frequent contact: +919876543210" in plain
+    assert "2 calls" in plain
+    assert "Group calls by counterparty" not in plain
+
+
+def test_answer_for_empty_result_is_explicit(inv):
+    from backend.app.search import answer as answer_mod
+
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.AMOUNT, op=Op.GTE, value=9_999_999)],
+    )
+    out = dsl.execute(spec, inv)
+    plain = answer_mod.compose_answer(spec, out)
+    assert plain.startswith("No matching events found")
+
+
+def test_answer_for_high_risk_entities(inv):
+    from backend.app.search import answer as answer_mod
+
+    spec = QuerySpec(
+        target=Target.ENTITIES,
+        filters=[Filter(field=Field_.RISK_BAND, op=Op.EQ, value="high")],
+    )
+    out = dsl.execute(spec, inv)
+    plain = answer_mod.compose_answer(spec, out)
+    assert "Subject A" in plain
+    assert "risk 88" in plain
+
+
+def test_answer_never_requires_llm_rows(inv):
+    """Regression: composing an answer must not call out — local template only."""
+    from backend.app.search import answer as answer_mod
+
+    spec = QuerySpec(
+        target=Target.EVENTS,
+        filters=[Filter(field=Field_.EVENT_TYPE, op=Op.EQ, value="CALL")],
+        group_by=Field_.COUNTERPARTY,
+    )
+    out = dsl.execute(spec, inv)
+    # Deliberately pass only the shaped result — no raw events.
+    plain = answer_mod.compose_answer(spec, {
+        "rows": out["rows"], "total": out["total"], "truncated": False,
+    })
+    assert plain.startswith("Most frequent contact:")
+
+
+def test_offline_planner_who_called_most_often(inv):
+    """No Gemini key required — common phrasing still becomes a QuerySpec + answer."""
+    from backend.app.search import answer as answer_mod
+    from backend.app.search import offline_planner
+
+    spec = offline_planner.plan("who did 9702000558 call most often?")
+    assert spec is not None
+    assert spec.group_by is Field_.COUNTERPARTY
+    out = dsl.execute(spec, inv)
+    plain = answer_mod.compose_answer(spec, out)
+    assert "Most frequent contact: +919876543210" in plain
+    assert "2 calls" in plain
+
+
+def test_offline_planner_transfers_over(inv):
+    from backend.app.search import offline_planner
+
+    spec = offline_planner.plan("transfers over 100000")
+    assert spec is not None
+    out = dsl.execute(spec, inv)
+    assert out["total"] == 1
+
+
+def test_offline_planner_calls_longer_than_duration(inv):
+    """Verification F3 — 'calls longer than 10 minutes' must plan offline."""
+    from backend.app.search import answer as answer_mod
+    from backend.app.search import offline_planner
+
+    spec = offline_planner.plan("find calls longer than 10 minutes")
+    assert spec is not None
+    assert any(f.field is Field_.DURATION and f.value == 600 for f in spec.filters)
+
+    # Fixture calls are 60s; inject one long enough to hit the filter.
+    long = dict(inv.events[0])
+    long["attributes"] = {**(long.get("attributes") or {}), "duration": 900}
+    inv.events.append(long)
+    out = dsl.execute(spec, inv)
+    plain = answer_mod.compose_answer(spec, out)
+    assert out["total"] == 1
+    assert "Found 1 call" in plain
 
 
 def test_calls_between_2am_and_5am(inv):

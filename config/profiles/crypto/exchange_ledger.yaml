@@ -1,0 +1,37 @@
+# Exchange / P2P wallet ledger (Binance-style USDT/USDC exports).
+#
+# On fir-65-2024 these landed in bank/ as wallet_details__*.xlsx and matched
+# bank_generic at confidence 0.25 via Description≈narration — then every row
+# was rejected: the timestamp lived in `Time` (not a bank date alias) and the
+# subject lived in `User ID` (not an account alias). A dedicated profile with
+# those columns required raises confidence and maps them correctly.
+profile:
+  id: crypto_exchange_ledger
+  source: BANK
+  event_type: TRANSACTION
+  source_tz: UTC
+  match:
+    required_any: ["User ID", "Currency"]
+    required_all: ["Time", "Amount"]
+field_map:
+  timestamp_start:
+    aliases: ["Time", "Timestamp", "DateTime", "Created At"]
+    type: datetime
+  account_no:
+    aliases: ["User ID", "UserID", "UID", "Account ID"]
+    type: string
+  amount:
+    aliases: ["Amount", "Qty", "Quantity"]
+    type: decimal
+  attributes.narration:
+    aliases: ["Description", "Type", "Remark", "Remarks"]
+    type: string
+  attributes.ref_no:
+    aliases: ["Transaction ID", "Txn ID", "Order ID / Commission ID", "Order ID"]
+    type: string
+  attributes.currency:
+    aliases: ["Currency", "Asset", "Coin"]
+    type: string
+  attributes.balance:
+    aliases: ["Available", "Balance"]
+    type: decimal

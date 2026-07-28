@@ -22,16 +22,21 @@ give the evidence and the measurements behind each row.
 | **G1** | Scanned evidence has no OCR | 58 images (+18 TIF in archives) | [§4](#4-still-open) |
 | **G2** | Legacy `.doc` (OLE2) unreadable | 37 files | [§4](#4-still-open) |
 | **G3** | Multi-section spreadsheets (several tables stacked in one sheet) | Binance-style exports | [§4](#4-still-open) |
-| **G4** | Password-protected archive members | counted at WARNING; analyst holds the password | [§1](#1-zip-archives-were-never-opened--92-of-them) |
-| **G5** | **Correlation returns 0** — only 1 phone↔account bridge exists | blocks FR-9, the flagship feature | [Why correlation still returns 0](#why-correlation-still-returns-0) |
+| **G4** | Password-protected archive members | counted at WARNING; set `ERAKSHAK_ZIP_PASSWORD` to unlock | [§1](#1-zip-archives-were-never-opened--92-of-them) |
+| **G5** | **STRONG impossible on this evidence** (IPDR IDs nowhere else in case); MEDIUM=2 | STRONG closed-out; MEDIUM capped by account↔phone=0 | [Why STRONG is 0](#why-strong-fr-9-is-0--measured-closed-out-conclusion) |
 | **G6** | PDF parsing is off by default, and that is where the bank evidence is | transactions ×3.3 when enabled | [§3](#3-financial-evidence-is-locked-in-pdf) |
+| **G7** | Remaining bank rejects (timestamp/id after SOA recovery) | bank_generic still drops rows missing ts/id | [Bank reject recovery](#bank-reject-recovery--measured-2026-07-27) |
+| ~~G7b~~ | ~~SOA PDFs scored as unrecognised (`Tran Particular`)~~ | **CLOSED** — 21,052 → 35,870 TXN; unrecognised rows → 0 | [SOA profile fix](#soa-pdfs--tran-particular-closed-2026-07-28) |
+| ~~B8~~ | ~~Finacle `FORACID` / exchange `Time`+`User ID` / IPDR tab `.txt`~~ | **CLOSED** — see measured table below | [Bank reject recovery](#bank-reject-recovery--measured-2026-07-27) |
 | ~~Q1~~ | ~~DSL: relative dates~~ | **CLOSED** — `relative_window` | [below](#known-limits-of-the-query-dsl--closed) |
 | ~~Q2~~ | ~~DSL: absence/negation~~ | **CLOSED** — `having` | [below](#known-limits-of-the-query-dsl--closed) |
 | ~~Q3~~ | ~~DSL: cross-entity comparison~~ | **CLOSED** — `group_must_include` | [below](#known-limits-of-the-query-dsl--closed) |
 | ~~Q4~~ | ~~DSL: free-text search~~ | **CLOSED** — `any_text` field | [below](#known-limits-of-the-query-dsl--closed) |
 
-**Highest value next:** G6 then G5 — an `entity_map.csv` is the fastest route to a non-zero
-correlation count. The DSL gaps (Q1–Q4) are closed.
+**Highest value next:** raise **MEDIUM** via the account↔phone bridge
+(`entity_map.csv` from KYC — in-case `registered_mobile ∩ CDR = 0`). SOA PDFs are
+recovered. STRONG stays **evidence-blocked** (G5) until the case officer supplies the
+archive password *and* unlocked CDRs contain the IPDR MSISDNs — or new IPDR arrives.
 
 **When you close one,** update its row and the measurement it cites — this file is only
 useful while its numbers are true. The previous gap document rotted precisely because
@@ -54,6 +59,65 @@ The system reported success while never seeing most of the case.
 | **Entities bridging phone↔account** | 0 | 0 | **1** |
 | Correlation hits | 0 | 0 | 0 |
 | Runtime | ~56 s | ~120 s | ~744 s |
+
+### Latest measured run — `fir-65-2024`, window 10 (2026-07-28)
+
+| Metric | Before SOA fix | **After SOA `Tran Particular` (now)** | Δ |
+|---|---:|---:|---:|
+| Files | 930 | **930** | 0 |
+| Events | 224,167 | **238,985** | +14,818 |
+| **Transactions** | 21,052 | **35,870** | +14,818 |
+| Calls | 203,046 | **203,046** | 0 |
+| IP sessions | 69 | **69** | 0 |
+| Entities | 4,131 | **4,132** | +1 |
+| Transfers | 12,527 | **12,616** | +89 |
+| Phone↔account bridges | 0 | **0** | 0 |
+| **CDR phones ∩ IPDR phones** | **0** | **0** | 0 |
+| Unrecognised source rows | ~58,416 | **0** | closed |
+| Correlation hits | 0 STRONG / 2 MEDIUM | **0 STRONG / 2 MEDIUM** | 0 |
+
+Expected before the SOA remeasure: TXN ≈ 36,379 (21,052 + 15,327 RBL SOA), MEDIUM = **2**,
+STRONG = **0**. Got TXN **35,870** (duplicate SOA under `bank/` + `other/` deduped; 1 row
+per copy still rejected for missing ts/id). MEDIUM stayed **2** as predicted — more bank
+rows without an account↔phone bridge do not create new CALL+TXN entities inside W.
+
+Independent re-derivation (paged `/v1/events`, not the correlator tally): CALL+TXN
+anywhere **10**, within W=10 **2**, CALL+TXN+IP **0** — matches MEDIUM=2 / STRONG=0.
+
+### First E2E run — `fir-0006-2025-u`, window 10 (2026-07-28)
+
+Cold analyze ~60 min (1,504 files; graph 181k nodes). **No prior figures existed.**
+
+| Metric | Measured |
+|---|---:|
+| Files | **1,504** |
+| Events | **449,567** |
+| Transactions | **337,393** |
+| Calls | **112,174** |
+| IP sessions | **0** |
+| Entities | **2,742** |
+| Transfers | **61,933** |
+| Rejected rows | **327,987** (1,460 entries) |
+| Unrecognised source rows | **0** |
+| **STRONG** `correlation_hits` | **0** |
+| **MEDIUM** `correlation_hits_medium` | **0** |
+| High-risk entities | **2** |
+
+STRONG cannot fire with **0** IP sessions. Independent bisect (paged events, not the
+correlator tally): CALL+TXN anywhere **28**, within W=10 **0**, CALL+TXN+IP **0** —
+matches MEDIUM=0 / STRONG=0. The 28 co-identity entities never land inside the same
+10-minute window on this case.
+
+Recovered bridges that were sitting unused in the case folder:
+
+- **Common IMEI reports** → auto LINK events (PHONE↔IMEI).
+- **IPv6 /64 enrichment** → IP-range host sessions inherit the TRAI MSISDN on the same /64.
+- **CDR target IMEI** → IMEI/IMSI merge only when A-party is the report target (filename or `target_phone`).
+- **G4** → `ERAKSHAK_ZIP_PASSWORD` / `ERAKSHAK_ZIP_PASSWORDS` tried on encrypted members
+  (**7** zips, **31** locked members — no password set in `.env` yet).
+
+**Tier (1.5.5):** `correlation_hits` stays STRONG-only (still **0**). MEDIUM call+txn
+coincidences: **2** hits / **2** entities at W=10. G5 remains open until CDR∩IPDR > 0.
 
 Two things to read carefully:
 
@@ -85,8 +149,8 @@ Extraction is defensive because archives are untrusted third-party input: recurs
 cap, shared uncompressed-byte budget (zip-bomb guard), path-traversal refusal, and
 per-member error isolation. **Password-protected archives are real in this case data** —
 `zipfile` raises a bare `RuntimeError` for them, which crashed the entire pipeline until it
-was handled per-member. Locked members are now counted and logged at WARNING, because the
-analyst holds the password and can act on it.
+was handled per-member. Locked members are counted at WARNING; set
+`ERAKSHAK_ZIP_PASSWORD` or comma-separated `ERAKSHAK_ZIP_PASSWORDS` to unlock them.
 
 Provenance survives the boundary: a record extracted from `bank.zip` cites
 `bank.zip → statement.csv`, not a temp path.
@@ -139,24 +203,111 @@ default for real cases (chosen for speed), and it is exactly where the money is.
 | OCR for scanned evidence | 58 images (+18 TIF inside archives) | Deferred deliberately: OCR'd financial figures need a confidence gate before entering a forensic timeline |
 | Legacy `.doc` (OLE2) | 37 files | `python-docx` cannot read them; correctly detected and cleanly rejected, not silently dropped |
 | Multi-section spreadsheets | Binance-style exports | Several tables stacked in one sheet (KYC block, then ledgers); single-header parsing rejects cleanly rather than emitting garbage |
-| Password-protected archive members | counted at WARNING | Analyst supplies the password |
+| Password-protected archive members | counted at WARNING | Set `ERAKSHAK_ZIP_PASSWORD(S)` |
 
 ---
 
-## Why correlation still returns 0
+## Bank reject recovery — measured 2026-07-27
 
-**This is not a correlator bug.** A hit requires one entity holding a transaction *and* a
-call *and* an IP session. The identifier census explains why that cannot happen:
+**Baseline after `da97dd0`:** 18,721 of 20,033 bank rows still rejected (93%),
+transactions stuck at 8,414, IPDR reported as 9/9 rejected.
 
-| Entity shape | Before | After (with PDFs) |
-|---|---:|---:|
-| Phone only | 4,987 | 7,967 |
-| Account only | 131 | 167 |
-| **Both (bridgeable)** | **0** | **1** |
+Traced the worst files through `parse_file → map_record → _norm_bank/_norm_ipdr`
+(not guessed). Three classes:
 
-Bank statements are keyed by account number, CDR/IPDR by phone. Nothing in the raw exports
-links them. Progress is real — the first bridge now exists — but one bridged entity, with
-only 65 IP sessions in the whole case, is not enough for the triple to land.
+| Class | Worst file(s) | Rejected | Root cause | Fix |
+|---|---|---:|---|---|
+| Finacle/IndusInd bulk SOA | `statement bulk.xls` (inside GHOD DOD zip) | 6,975 | Account in `FORACID`, debit misspelled `DEDIT_AMOUNT`; timestamp was fine | Aliases on `bank_generic` |
+| Exchange / P2P wallet ledger | `wallet_details__*.xlsx`, BNB reports | 6,683 | Timestamp in `Time`, subject in `User ID`, signed `Amount` — none mapped | `crypto_exchange_ledger` profile + signed-amount path in `_norm_bank` |
+| Tab-separated IPDR range | `ipdr__1365.txt` | 9 | `pd.read_csv` defaulted to comma → one-column header → unrecognized source | `sep=None` delimiter sniff in `tabular.read` |
+
+**Expectation before re-run:** recover ~13.6k bank rows from the first two classes;
+IPDR txt should produce ~7 sessions (2 preamble rows are junk).
+
+**Measured after rebuild + cold `/v1/analyze`:**
+
+- Bank rejected **18,721 → 4,665** (−14,056)
+- Transactions **8,414 → 20,999** (+12,585)
+- Transfers **5,832 → 12,527** (+6,695)
+- IP sessions **unchanged at 65** — the txt’s 7 real rows are the same sessions
+  already present in `ipdr__1365.xlsx`, so A2 dedupe correctly drops them. The
+  previous “9 of 9 IPDR rejected” was the unrecognized `.txt`; that file is now
+  typed `IPDR` / `ipdr_iprange` with only the 2 preamble rows rejected.
+- Correlation **still 0** — more transactions on the same accounts do not create
+  the account↔phone bridge (G5). Entities only +12.
+
+**Still open under G7:** the remaining 4,665 bank rejects are mostly complaint /
+statement PDFs (`complain_gujarat_09__*.pdf`, Bandhan / Axis statement PDFs) —
+a different class from the alias bugs above. Trace those next; do not re-tune
+FORACID / Time aliases expecting further movement there.
+
+Regression fixtures (synthetic shapes, no case data) live in
+`backend/tests/test_real_data_ingestion_fixes.py`.
+
+---
+
+## Why STRONG (FR-9) is 0 — measured closed-out conclusion
+
+**STRONG cannot fire on `fir-65-2024` because the IPDR identifiers are absent from the
+rest of the case.** This is evidence, not a parser bug. Source-file search (stronger than
+entity-level intersection):
+
+| Identifier | Value | Hits under `cdr/` | Hits anywhere outside `ipdr/` |
+|---|---|---:|---:|
+| MSISDN | `7500107305` | **0** | **0** |
+| MSISDN | `8535088505` | **0** | **0** |
+| IMEI | `355330170920575` | **0** | **0** |
+| IMEI | `358419296846579` | **0** | **0** |
+| IMSI | `405870182224029` | **0** | **0** |
+| IMSI | `405870182365083` | **0** | **0** |
+
+Those six values exist **only inside IPDR files**. No amount of mapping/alias work will
+create CALL+IP on one entity until IPDR for numbers that already appear in CDR is added,
+or a locked archive is shown to contain those MSISDNs.
+
+### Locked archives — precise statement
+
+**7** password-protected archives, **31** encrypted members. **All seven are CDR or IMEI
+exports — none is IPDR.**
+
+```
+CDR__1367__SP10024760.zip          CDR__4169__SP11102422.zip
+CDR__6608__MSISDN_…tar.gz.zip      CDR__6857__SP9252797.zip
+imei__6607__airtel__SP9086079.zip  imei__SP9045917.zip
+upload__0065_soft_file__…zip
+```
+
+A password therefore adds **CDR/IMEI coverage, not IP sessions**. It can produce STRONG
+only if an unlocked CDR happens to contain `7500107305` or `8535088505` — the one
+hypothesis still untestable without the case officer’s password. Near-miss digit strings
+in locked member names are **not** a lead.
+
+**Action for the case officer:** supply `ERAKSHAK_ZIP_PASSWORD` (or
+`ERAKSHAK_ZIP_PASSWORDS`). Everything else about STRONG on this case is blocked on
+evidence, not code.
+
+G5 remains **open** for STRONG until that evidence exists. MEDIUM (below) is a
+mitigation, not the FR-9 fix.
+
+### Mitigation: tiered correlation (MEDIUM)
+
+| Tier | Rule | Summary field |
+|---|---|---|
+| **STRONG** | txn + call + IP in W | `correlation_hits` (unchanged meaning) |
+| **MEDIUM** | txn + call in W, no overlapping IP | `correlation_hits_medium` (new) |
+
+| Check | Result |
+|---|---:|
+| Correlator on smoke (STRONG) | hits ≥ 1 |
+| Entities with ACCOUNT_NO + PHONE | **0** |
+| Entities with CALL + TRANSACTION (any time) | **10** (UPI-phone bridge) |
+| Those with CALL + TRANSACTION within W=10 | **2** |
+| STRONG hits | **0** (evidence — § above) |
+| MEDIUM hits (W=10) | **2** |
+
+MEDIUM is capped by the missing account↔phone bridge: bank and telecom identities stay
+separate entities except where UPI VPA mining already links a phone. Raising MEDIUM is
+the productive code path while STRONG waits on evidence.
 
 ### The LLM-vs-system experiment
 
@@ -176,23 +327,42 @@ case folder find one the rule-based pipeline cannot?
 | **…that would create a working bridge** | **0** |
 
 **Result: negative, and that is the useful finding.** Document mining does *not* rescue
-correlation. The 33 mined accounts are complaint/fraud accounts from NCRP registers — not
-the accounts whose statements were obtained. The intuition "the mapping is written down in
-the FIR, the rule-based system just can't read prose" is **wrong**, and acting on it would
-have wasted effort on a document-mining feature that recovers nothing.
+correlation.
 
-The bridge is missing because the statements were not ingested, not because nobody recorded
-the mapping. That is why evidence recovery had to come first.
+### P1 census — account↔phone bridge (measured)
 
-### How to actually light up correlation
+| Check | Result |
+|---|---:|
+| `registered_mobile` raw hits on bank PDFs | 10 files |
+| …parseable to a 10-digit mobile | 5 |
+| …mobile also present in CDR | **0** |
+| In-case `entity_map` candidates (acct + mobile∩CDR) | **0** |
+| Entities with ACCOUNT_NO | 388 (pre-SOA census) |
+| Entities with PHONE | 8,141 (identifier count; resolved entities fewer) |
+| Entities with ACCOUNT_NO **and** PHONE | **0** |
+| UPI-phone counterparties driving CALL+TXN | all **10** of the anywhere-set |
 
-1. **Run with PDFs enabled** — the only change that moved the account count.
-2. **Supply the KYC map.** Investigators hold CAF/registered-mobile data. Drop an
-   `entity_map.csv` in the case folder (see `datasets/entity_map.template.csv`); the merge
-   mechanism is built and unit-tested (`test_bridge.py`). This is the intended path and the
-   fastest route to a non-zero hit count.
-3. **OCR the scanned statements** to recover the remaining accounts.
+`datasets/entity_map.template.csv` is still untried with **real KYC**. Filling it from
+investigator CAF/KYC (account ↔ registered mobile that exists in CDR) is the only
+remaining fast lever for MEDIUM. Case-derived header mobiles do not intersect CDR on
+this folder.
 
+### SOA PDFs — `Tran Particular` (CLOSED 2026-07-28)
+
+Worst unrecognised file: `bank__RBL__409725898750-SOA.pdf` (15,327 rows). Headers were
+real bank columns but `bank_generic` `required_any` lacked `tran particular` / debit /
+credit / tran date, so `score_profile` returned **0** (`source=None`). Fix in
+`config/profiles/banks/generic.yaml`. After rebuild+analyze the same file is
+`source=BANK` / `profile=bank_generic` with **1** row rejected (missing ts/id).
+
+### How to raise MEDIUM (and eventually STRONG)
+
+1. **Supply `entity_map.csv`** (account ↔ registered mobile from KYC/CAF) — fastest lever;
+   in-case registered_mobile cannot do it (∩ CDR = 0).
+2. ~~Recover bank SOA / statement PDFs~~ — **done** for Finacle `Tran Particular` SOA.
+3. **Ask the case officer for the archive password** — only then re-test whether IPDR
+   MSISDNs appear in locked CDRs (STRONG hypothesis).
+4. Until STRONG evidence arrives, use **MEDIUM** hits as two-leg investigative leads.
 ---
 
 ## Natural-language query
@@ -238,8 +408,9 @@ question ─► Gemini (schema vocabulary only) ─► QuerySpec (validated) ─
 - `backend/app/search/llm_planner.py` — the only module that calls an external API.
   Verified live: **8/8** of the previously-unanswerable questions now produce a correct
   plan, and 6/6 execute end-to-end against the real 166k-event CDR corpus.
-- `/v1/query/{ds}` returns `engine`, `total`, `truncated`, and the generated **`spec`** so
-  the analyst can audit exactly what ran.
+- `/v1/query/{ds}` returns `answer` (plain-text result composed locally), `engine`,
+  `total`, `truncated`, and the generated **`spec`** so the analyst can audit exactly
+  what ran. `explanation` describes the *plan*; `answer` answers the question.
 
 **Data handling (research/10 SR-R4).** Backed by the Google Gemini API on a free-tier
 Flash-Lite model — planning one question into a small enum-constrained object is an easy

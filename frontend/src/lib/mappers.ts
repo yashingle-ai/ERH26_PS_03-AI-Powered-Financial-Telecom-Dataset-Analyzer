@@ -89,14 +89,19 @@ export function mapHit(hit: CorrelationHitDto, index: number): CorrelationHit {
   const windowLabel = txnTime
     ? txnTime.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
     : `W=${hit.window_minutes}m`;
+  const tier = hit.tier === "MEDIUM" ? "MEDIUM" : "STRONG";
+  const events = tier === "STRONG" ? ["call", "ip", "txn"] : ["call", "txn"];
 
   return {
-    id: `hit-${index}-${hit.entity_id}`,
+    id: `hit-${tier}-${index}-${hit.entity_id}`,
     window: windowLabel,
     entities: [hit.entity_label || hit.entity_id].filter(Boolean),
-    events: ["call", "ip", "txn"],
+    events,
     delta: `+${deltaMin}m ${deltaSec}s`,
-    score: Math.min(99, 70 + Math.round((hit.window_minutes || 10) / 2)),
+    score: tier === "STRONG"
+      ? Math.min(99, 70 + Math.round((hit.window_minutes || 10) / 2))
+      : Math.min(69, 40 + Math.round((hit.window_minutes || 10) / 2)),
+    tier,
   };
 }
 

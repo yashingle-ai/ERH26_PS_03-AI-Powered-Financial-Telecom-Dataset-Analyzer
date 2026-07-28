@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-
-def _alias_index(profile: dict) -> dict[str, str]:
-    """Map lowercased alias -> canonical target key."""
-    idx: dict[str, str] = {}
-    for target, spec in profile.get("field_map", {}).items():
-        for alias in spec.get("aliases", []):
-            idx[alias.strip().lower()] = target
-    return idx
+import re
 
 
-def _alias_rank(profile: dict) -> dict[str, int]:
-    """Map lowercased alias -> its position in the profile's alias list.
+def _norm_header(value: str) -> str:
+    """Collapse PDF/OCR header noise so aliases still match.
 
-    A profile lists aliases best-first, so position is a preference order.
+    NCRP complaint PDFs embed newlines inside column titles
+    (`Account No./ (Wallet\\n/PG/PA) ID`). Exact string match against the profile
+    then fails and every row is rejected for "missing timestamp / primary".
     """
-    rank: dict[str, int] = {}
-    for spec in profile.get("field_map", {}).values():
-        for position, alias in enumerate(spec.get("aliases", [])):
-            rank[alias.strip().lower()] = position
-    return rank
+    return re.sub(r"\s+", " ", str(value).strip().lower())
 
 
 def map_record(raw: dict, profile: dict) -> dict:
@@ -36,24 +27,51 @@ def map_record(raw: dict, profile: dict) -> dict:
     Two rules instead, in order:
       1. a non-empty value always beats an empty one;
       2. among non-empty values, the alias the profile lists first wins.
+
+    One header may also feed multiple targets (e.g. Target/A → entity_phone and
+    target_phone). Aliases that appear under several field_map entries are applied
+    to every matching target.
     """
-    idx = _alias_index(profile)
-    rank = _alias_rank(profile)
+    # alias -> list of (target, rank) so shared headers can fill several fields
+    idx: dict[str, list[tuple[str, int]]] = {}
+    for target, spec in profile.get("field_map", {}).items():
+        for position, alias in enumerate(spec.get("aliases", [])):
+            key = _norm_header(alias)
+            idx.setdefault(key, []).append((target, position))
+
     out: dict = {}
     chosen: dict[str, tuple[bool, int]] = {}     # target -> (is_empty, alias rank)
 
     for header, value in raw.items():
         if header == "_provenance":
             continue
-        key = str(header).strip().lower()
-        target = idx.get(key)
-        if not target:
+        key = _norm_header(header)
+        targets = idx.get(key) or []
+        if not targets:
             continue
-        # strip surrounding quotes real exports wrap around values ('919099102222')
         if isinstance(value, str):
             value = value.strip().strip("'\"")
-        candidate = (value is None or value == "", rank.get(key, 10_000))
-        if target not in chosen or candidate < chosen[target]:
-            chosen[target] = candidate
-            out[target] = value
+        for target, rank in targets:
+            candidate = (value is None or value == "", rank)
+            if target not in chosen or candidate < chosen[target]:
+                chosen[target] = candidate
+                out[target] = value
     return out
+
+
+def _alias_index(profile: dict) -> dict[str, str]:
+    """Map normalized alias -> canonical target (first declared wins). Kept for tests."""
+    idx: dict[str, str] = {}
+    for target, spec in profile.get("field_map", {}).items():
+        for alias in spec.get("aliases", []):
+            idx.setdefault(_norm_header(alias), target)
+    return idx
+
+
+def _alias_rank(profile: dict) -> dict[str, int]:
+    """Map normalized alias -> its position in the profile's alias list."""
+    rank: dict[str, int] = {}
+    for spec in profile.get("field_map", {}).values():
+        for position, alias in enumerate(spec.get("aliases", [])):
+            rank.setdefault(_norm_header(alias), position)
+    return rank

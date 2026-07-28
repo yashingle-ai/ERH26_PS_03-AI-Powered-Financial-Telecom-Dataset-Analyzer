@@ -116,6 +116,24 @@ def _bank_identity_aliases() -> dict[str, list[str]]:
     return out
 
 
+def _is_numeric_identity_field(field_name: str) -> bool:
+    return any(k in field_name for k in ("no", "number", "mobile", "phone"))
+
+
+#: A country code on its own identifies nobody. Statements write mobiles as
+#: "+91 8180934367", "+91-81809 34567" or "0 81809 34567", so a value is only kept
+#: once it carries enough digits to be an actual identifier.
+_MIN_IDENTITY_DIGITS = 6
+
+
+def _clean_numeric_identity(value: str) -> str | None:
+    """Strip separators from a numeric identity value, or None if it is too short."""
+    compact = re.sub(r"[\s\-()]", "", str(value).strip())
+    if len(re.sub(r"\D", "", compact)) < _MIN_IDENTITY_DIGITS:
+        return None
+    return compact
+
+
 def _extract_identity(rows_above: list[list], text_lines: list[str]) -> dict:
     identity: dict = {}
     alias_map = _bank_identity_aliases()
@@ -126,10 +144,19 @@ def _extract_identity(rows_above: list[list], text_lines: list[str]) -> dict:
         for j, cell in enumerate(cells):
             low = cell.lower().rstrip(":")
             for field_name, aliases in alias_map.items():
-                if low in aliases:
-                    value = next((cells[k] for k in range(j + 1, len(cells)) if cells[k]), "")
+                if low not in aliases:
+                    continue
+                rest = [cells[k] for k in range(j + 1, len(cells)) if cells[k]]
+                if not rest:
+                    continue
+                if _is_numeric_identity_field(field_name):
+                    # A split cell ("+91" | "8180934367") yields the country code alone
+                    # from the first non-empty cell, so join the row's tail and clean it.
+                    value = _clean_numeric_identity("".join(rest))
                     if value:
                         identity[field_name] = value
+                else:
+                    identity[field_name] = rest[0]
 
     # (b) free text (PDF): "Account Number: 12345"  /  "Account Name: John Doe"
     joined = "\n".join(text_lines)
@@ -137,14 +164,26 @@ def _extract_identity(rows_above: list[list], text_lines: list[str]) -> dict:
         if field_name in identity:
             continue
         # numeric identifiers (account no / mobile) capture digits; names capture words
-        numeric = any(k in field_name for k in ("no", "number", "mobile", "phone"))
-        value_pat = r"(\+?\d[\d]*)" if numeric else r"([A-Za-z][A-Za-z .]+?)"
+        numeric = _is_numeric_identity_field(field_name)
+        # A digits-only class stops at the first space, so "+91 8180934367" captured
+        # "+91" — three of four real mobiles came out as the bare country code. Allow
+        # internal separators and validate the digit count afterwards.
+        value_pat = (r"(\+?\d[\d\s\-()]{4,24}\d|\+?\d+)" if numeric
+                     else r"([A-Za-z][A-Za-z .]+?)")
         for alias in aliases:
             m = re.search(rf"{re.escape(alias)}\s*[:\-]?\s*{value_pat}(?:\s{{2,}}|\n|$| IFSC| A/C)",
                           joined, re.I)
-            if m:
-                identity[field_name] = m.group(1).strip()
-                break
+            if not m:
+                continue
+            raw = m.group(1).strip()
+            if numeric:
+                cleaned = _clean_numeric_identity(raw)
+                if not cleaned:
+                    continue          # country code only — keep looking
+                identity[field_name] = cleaned
+            else:
+                identity[field_name] = raw
+            break
     return identity
 
 

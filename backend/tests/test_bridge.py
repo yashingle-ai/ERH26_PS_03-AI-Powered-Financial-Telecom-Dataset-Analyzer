@@ -3,6 +3,7 @@
 from backend.app.entity_resolution import mapping as er_mapping
 from backend.app.entity_resolution import service as er
 from backend.app.normalization import narration
+from backend.app.normalization import service as norm
 
 
 def test_narration_extracts_phone_vpa():
@@ -33,3 +34,25 @@ def test_kyc_mapping_bridges_account_and_phone(tmp_path):
 
 def test_no_mapping_file_is_noop(tmp_path):
     assert er_mapping.load_link_events(str(tmp_path)) == []
+
+
+def test_registered_mobile_only_bridges_header_account():
+    """NCRP complaint tables list mule accounts in rows; complainant mobile is header-only.
+
+    Bridging that phone onto every row account would falsely merge victim↔mule.
+    """
+    from datetime import datetime, timezone
+
+    ts = datetime(2024, 6, 9, 10, 0, tzinfo=timezone.utc)
+    identity = {"account_no": "111", "registered_mobile": "9876543210"}
+    # subject account row -> phone attached
+    subj = norm._norm_bank(
+        {"account_no": "111", "timestamp_start": ts.isoformat(), "amount": "100"},
+        identity, {"narration_extract": {}}, {"source_file": "t"}, "IST")
+    assert ("PHONE", "+919876543210") in subj["own_identifiers"]
+    # mule layer row -> account only
+    mule = norm._norm_bank(
+        {"account_no": "222", "timestamp_start": ts.isoformat(), "amount": "100"},
+        identity, {"narration_extract": {}}, {"source_file": "t"}, "IST")
+    assert mule["primary"] == ("ACCOUNT_NO", "222")
+    assert all(t != "PHONE" for t, _ in mule["own_identifiers"])

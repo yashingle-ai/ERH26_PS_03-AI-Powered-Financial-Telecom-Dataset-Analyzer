@@ -9,6 +9,8 @@ import {
   ShieldAlert,
   FileText,
   Settings,
+  MessageSquareText,
+  ClipboardList,
 } from "lucide-react";
 
 import {
@@ -32,10 +34,12 @@ const nav = [
     { title: "Upload & Ingest", url: "/upload", icon: Upload },
   ]},
   { section: "Analysis", items: [
+    { title: "Ask", url: "/ask", icon: MessageSquareText },
     { title: "Timeline", url: "/timeline", icon: Clock, search: { entity: undefined } },
     { title: "Network graph", url: "/network", icon: Share2 },
     { title: "Entities", url: "/entities", icon: Users, search: { id: undefined, rule: undefined } },
     { title: "Detections", url: "/detections", icon: ShieldAlert },
+    { title: "Data quality", url: "/quality", icon: ClipboardList },
   ]},
   { section: "Output", items: [
     { title: "Reports", url: "/reports", icon: FileText },

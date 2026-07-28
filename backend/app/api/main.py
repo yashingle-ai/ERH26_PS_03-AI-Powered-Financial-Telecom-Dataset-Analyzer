@@ -31,7 +31,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
@@ -45,6 +45,7 @@ from backend.app.api.security import (
 )
 from backend.app.core.logging_config import audit, get_logger, setup_logging
 from backend.app.ingestion import detector
+from backend.app.reporting import service as reporting
 
 setup_logging()
 log = get_logger(__name__)
@@ -464,6 +465,7 @@ def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
         "file_counts": _file_counts(inv),
         "money_flow_series": _money_flow_series(inv),
         "correlation_hits": inv.correlation_hits[:100],
+        "correlation_hits_medium": inv.correlation_hits_medium[:100],
         "top_risk": [_enrich_risk(r, inv) for r in top],
     }
 
@@ -548,35 +550,46 @@ class QueryRequest(BaseModel):
 
 @v1.post("/query/{ds}")
 def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst"))):
-    from backend.app.search import dsl, llm_planner, nl_query
+    from backend.app.search import answer as answer_mod
+    from backend.app.search import dsl, llm_planner, nl_query, offline_planner
 
     inv = _analyze(ds, req.window_minutes)
 
+    spec = None
+    engine = "rules"
     if req.engine != "rules":
         try:
             spec = llm_planner.plan(req.q)
         except ValueError as e:        # the outbound-payload guard tripped
             raise HTTPException(400, str(e)) from e
         if spec is not None:
-            out = dsl.execute(spec, inv)
-            audit("nl_query", user=user["username"], dataset=ds, q=req.q, engine="llm")
-            return {
-                "query": req.q,
-                "engine": "llm",
-                "explanation": spec.explanation or "Structured query executed locally.",
-                "rows": out["rows"],
-                "matched": len(out["rows"]),
-                "total": out["total"],
-                "truncated": out["truncated"],
-                # Resolved relative window, blank-key count, and any executor note —
-                # all part of "what actually ran", which the analyst must be able to see.
-                "window": out.get("window"),
-                "skipped_blank": out.get("skipped_blank"),
-                "note": out.get("note"),
-                # The generated plan is part of the evidentiary record: an analyst must be
-                # able to see exactly what was run, not just the answer.
-                "spec": spec.model_dump(mode="json"),
-            }
+            engine = "llm"
+
+    # Air-gapped / no-key path: map common investigator phrasings onto a QuerySpec
+    # so aggregation questions still get a real answer + auditable plan.
+    if spec is None and req.engine != "llm":
+        spec = offline_planner.plan(req.q)
+        if spec is not None:
+            engine = "offline"
+
+    if spec is not None:
+        out = dsl.execute(spec, inv)
+        plain = answer_mod.compose_answer(spec, out)
+        audit("nl_query", user=user["username"], dataset=ds, q=req.q, engine=engine)
+        return {
+            "query": req.q,
+            "engine": engine,
+            "answer": plain,
+            "explanation": spec.explanation or "Structured query executed locally.",
+            "rows": out["rows"],
+            "matched": len(out["rows"]),
+            "total": out["total"],
+            "truncated": out["truncated"],
+            "window": out.get("window"),
+            "skipped_blank": out.get("skipped_blank"),
+            "note": out.get("note"),
+            "spec": spec.model_dump(mode="json"),
+        }
 
     result = nl_query.answer(req.q, {
         "entities": inv.entities,
@@ -585,10 +598,17 @@ def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst")))
         "correlation_hits": inv.correlation_hits,
     })
     rows = result.get("rows")
+    plain = answer_mod.compose_answer(
+        None,
+        {"rows": rows, "total": result.get("total", len(rows) if rows else 0),
+         "truncated": result.get("truncated"), "note": None, "window": None},
+        rules_explanation=result["explanation"],
+    )
     audit("nl_query", user=user["username"], dataset=ds, q=req.q, engine="rules")
     return {
         "query": req.q,
         "engine": "rules",
+        "answer": plain,
         "explanation": result["explanation"],
         "rows": rows,
         "matched": len(rows) if rows is not None else 0,
@@ -599,6 +619,45 @@ def nl_search(ds: str, req: QueryRequest, user=Depends(require_role("analyst")))
         "note": None,
         "spec": None,
     }
+
+
+class ReportRequest(BaseModel):
+    window_minutes: int = 10
+    fmt: str = "pdf"
+
+
+@v1.post("/report/{ds}")
+def report(ds: str, req: ReportRequest, user=Depends(require_role("analyst"))):
+    """Generate a forensic report (FR-16) and return the file.
+
+    The generator existed and worked, but only the Streamlit dashboard could reach
+    it — the React app, which is the primary UI, had no route to the problem
+    statement's headline deliverable.
+
+    Written under data/outputs/ as well as streamed back: that directory is
+    gitignored and dockerignored because a report is derived from case evidence and
+    inherits its sensitivity.
+    """
+    fmt = (req.fmt or "pdf").lower()
+    if fmt not in {"pdf", "docx"}:
+        raise HTTPException(400, "fmt must be 'pdf' or 'docx'")
+
+    inv = _analyze(ds, req.window_minutes)
+    payload = reporting.payload_from_investigation(inv, ds, req.window_minutes)
+    out_dir = ROOT / "data" / "outputs"
+    try:
+        path = reporting.generate(payload, str(out_dir), fmt=fmt)
+    except Exception:
+        # The generator reaches into matplotlib and reportlab; a failure there is not
+        # the analyst's fault and must not surface as a bare 500 with no context.
+        log.exception("report generation failed for %s (fmt=%s)", ds, fmt)
+        raise HTTPException(500, "report generation failed — see server logs") from None
+
+    audit("report", user=user["username"], dataset=ds, fmt=fmt,
+          window=req.window_minutes, path=Path(path).name)
+    media = ("application/pdf" if fmt == "pdf" else
+             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return FileResponse(path, media_type=media, filename=Path(path).name)
 
 
 app.include_router(v1)

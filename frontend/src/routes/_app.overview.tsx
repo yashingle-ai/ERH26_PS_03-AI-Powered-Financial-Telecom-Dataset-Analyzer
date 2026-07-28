@@ -46,7 +46,10 @@ function OverviewPage() {
 
   const c = mapCaseFromAnalyze(dataset || data.dataset, data);
   const top = data.top_risk.map(mapEntity).slice(0, 6);
-  const correlationHits = data.correlation_hits.slice(0, 8).map(mapHit);
+  const strongHits = data.correlation_hits.slice(0, 8).map(mapHit);
+  const mediumHits = (data.correlation_hits_medium || []).slice(0, 8).map((h, i) =>
+    mapHit({ ...h, tier: h.tier || "MEDIUM" }, i),
+  );
   const riskDistribution = riskDistributionFrom(data.top_risk);
   const moneyFlowSeries = data.money_flow_series.length
     ? data.money_flow_series
@@ -73,10 +76,15 @@ function OverviewPage() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
         <KPI label="Entities" value={c.entities.toLocaleString("en-IN")} sub="resolved" />
         <KPI label="Events" value={c.events.toLocaleString("en-IN")} sub="txn · call · ip" />
-        <KPI label="Correlation hits" value={c.hits.toLocaleString("en-IN")} sub={`W = ${windowMinutes}m`} tone="primary" />
+        <KPI label="STRONG hits" value={c.hits.toLocaleString("en-IN")} sub={`FR-9 · W = ${windowMinutes}m`} tone="primary" />
+        <KPI
+          label="MEDIUM hits"
+          value={String(data.summary.correlation_hits_medium ?? 0)}
+          sub="call + txn only"
+        />
         <KPI label="High-risk entities" value={String(data.summary.high_risk_entities)} sub="score ≥ 70" tone="risk" />
         <KPI label="Transfers" value={String(data.summary.transfers)} sub="money-flow edges" />
       </div>
@@ -200,19 +208,22 @@ function OverviewPage() {
         <div className="rounded-lg border border-border bg-surface/40">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
-              <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">Recent correlation hits</div>
-              <div className="mt-0.5 text-sm text-foreground">Call + IP + transfer within W</div>
+              <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">Correlation hits</div>
+              <div className="mt-0.5 text-sm text-foreground">STRONG = call+IP+txn · MEDIUM = call+txn</div>
             </div>
             <TrendingUp className="h-4 w-4 text-primary" />
           </div>
           <ul className="divide-y divide-border">
-            {correlationHits.length === 0 && (
+            {strongHits.length === 0 && mediumHits.length === 0 && (
               <li className="px-4 py-6 text-sm text-muted-foreground">No correlation hits in this window.</li>
             )}
-            {correlationHits.map((h) => (
+            {strongHits.map((h) => (
               <li key={h.id} className="px-4 py-3 hover:bg-accent/40">
                 <div className="flex items-center justify-between">
-                  <div className="text-mono text-[11px] text-primary">{h.window}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-mono rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-primary">Strong</span>
+                    <div className="text-mono text-[11px] text-primary">{h.window}</div>
+                  </div>
                   <RiskBadge score={h.score} />
                 </div>
                 <div className="mt-1.5 text-sm text-foreground">{h.entities.join("  ↔  ")}</div>
@@ -221,6 +232,24 @@ function OverviewPage() {
                   <span className="inline-flex items-center gap-1"><Globe className="h-3 w-3" />ip</span>
                   <span className="inline-flex items-center gap-1"><ArrowRightLeft className="h-3 w-3" />txn</span>
                   <span className="ml-auto text-primary">Δ {h.delta}</span>
+                </div>
+              </li>
+            ))}
+            {mediumHits.map((h) => (
+              <li key={h.id} className="border-l-2 border-l-amber-600/70 bg-amber-950/10 px-4 py-3 hover:bg-amber-950/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-mono rounded border border-amber-600/50 bg-amber-900/30 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-amber-200">Medium</span>
+                    <div className="text-mono text-[11px] text-amber-200/90">{h.window}</div>
+                  </div>
+                  <RiskBadge score={h.score} />
+                </div>
+                <div className="mt-1.5 text-sm text-foreground">{h.entities.join("  ↔  ")}</div>
+                <div className="text-mono mt-1.5 flex items-center gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <span className="inline-flex items-center gap-1"><PhoneCall className="h-3 w-3" />call</span>
+                  <span className="inline-flex items-center gap-1 opacity-40"><Globe className="h-3 w-3" />ip —</span>
+                  <span className="inline-flex items-center gap-1"><ArrowRightLeft className="h-3 w-3" />txn</span>
+                  <span className="ml-auto text-amber-200/80">Δ {h.delta}</span>
                 </div>
               </li>
             ))}

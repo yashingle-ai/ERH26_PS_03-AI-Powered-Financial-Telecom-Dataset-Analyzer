@@ -6,41 +6,64 @@ profile:
   source: BANK
   event_type: TRANSACTION
   match:
-    required_any: ["narration", "description", "particulars", "tran_id", "transaction id"]
+    # Include Finacle/RBL SOA labels ("Tran Particular", "Debit Amount") — without them
+    # real statement PDFs scored 0 and landed in the unrecognised reject bucket (58k rows).
+    required_any: ["narration", "description", "particulars", "tran particular",
+                   "tran_id", "transaction id", "debit amount", "credit amount", "tran date"]
     required_all: []
 field_map:
   timestamp_start:
+    # Prefer full date columns over a bare "Time" — exchange ledgers only have Time,
+    # while bank statements with separate Date + Time columns must keep Date.
     aliases: ["Transaction Date", "Txn Date", "Date", "Value Date", "Tran Date", "Tran_Date",
-              "Txn_Date", "pstd_dt", "Posting Date", "Date of Transaction"]
+              "TRAN_DATE", "Txn_Date", "pstd_dt", "Posting Date", "Date of Transaction",
+              "Time"]
     type: datetime
   attributes.narration:
     aliases: ["Narration", "Description", "Particulars", "Remarks", "Transaction Remarks",
-              "Transaction Details"]
+              "Transaction Details", "TRAN_PARTICULAR", "TRAN_PARTICULAR_2", "Type",
+              "Tran Particular", "Tran Particulars"]
     type: string
   debit:
+    # DEDIT_AMOUNT is a real Finacle/IndusInd typo seen in bulk statement exports.
     aliases: ["Debit", "Withdrawal", "Withdrawal Amt", "Dr", "Dr_Amt", "Debit Amount",
-              "Withdrawal Amount (INR )", "DR", "Debit(Dr)"]
+              "DEBIT_AMOUNT", "DEDIT_AMOUNT", "Withdrawal Amount (INR )", "DR", "Debit(Dr)"]
     type: decimal
   credit:
     aliases: ["Credit", "Deposit", "Deposit Amt", "Cr", "Cr_Amt", "Credit Amount",
-              "Deposit Amount (INR )", "CR", "Credit(Cr)"]
+              "CREDIT_AMOUNT", "Deposit Amount (INR )", "CR", "Credit(Cr)"]
+    type: decimal
+  # Signed single-column amount (exchange / P2P wallet ledgers). Used when debit/credit
+  # are absent; negative => DEBIT, positive => CREDIT.
+  amount:
+    aliases: ["Amount", "TRAN_AMT", "Txn Amount", "Transaction Amount"]
     type: decimal
   attributes.balance:
     aliases: ["Balance", "Closing Balance", "Running Balance", "Balance (INR )",
-              "Available Balance", "Balance Amount"]
+              "Available Balance", "Balance Amount", "Available"]
     type: decimal
   attributes.ref_no:
-    aliases: ["Ref No", "Reference", "Cheque No", "Transaction ID", "UTR", "RRN",
-              "Tran_ID", "Tran ID", "Transaction_ID", "Chq/Ref Number", "Instrument Number",
-              "Inst_Num", "Cheque Number", "Ref/Cheque No"]
+    aliases: ["Ref No", "Reference", "Cheque No", "Transaction ID", "Transaction Id",
+              "UTR", "RRN",
+              "Tran_ID", "Tran ID", "TRAN_ID", "Transaction_ID", "Chq/Ref Number",
+              "Instrument Number", "Inst_Num", "Cheque Number", "Ref/Cheque No", "REF_NUM",
+              "Reference No.", "Reference No", "Instrument Num.", "Instrument Num"]
+    type: string
+  attributes.currency:
+    aliases: ["Currency", "Ccy", "CCY", "Tran Crncy Code", "Crncy Code"]
     type: string
   # Per-row account/holder columns (present in SOA/ICORE statements)
   account_no:
+    # FORACID = Finacle operating account id on IndusInd/core-banking bulk dumps.
+    # User ID = exchange/P2P wallet ledger subject.
+    # NCRP complaint tables use "Account No./ (Wallet /PG/PA) ID" (often with
+    # embedded newlines in the PDF extract — field_mapper collapses whitespace).
     aliases: ["Ac_No", "acct_number", "Account Number", "A/C No", "Account No", "Account No.",
-              "AccountNo", "ACCOUNT NO"]
+              "AccountNo", "ACCOUNT NO", "FORACID", "User ID", "UserID", "UID",
+              "Account No./ (Wallet /PG/PA) ID", "Account No./ (Wallet /PG/PA) Id"]
     type: string
   account_holder:
-    aliases: ["AC_Name", "Account Name", "Customer Name", "Name", "Account Holder"]
+    aliases: ["AC_Name", "ACCT_NAME", "Account Name", "Customer Name", "Name", "Account Holder"]
     type: string
 # Identity fields when they live in the statement header block (not per-row)
 header_identity:

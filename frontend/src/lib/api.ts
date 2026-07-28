@@ -126,7 +126,10 @@ export type AnalyzeSummary = {
   /** Number of distinct (file, reason) reject groups behind `rejected_rows`. */
   reject_entries: number;
   entities: number;
+  /** STRONG only (call + IP + transfer) — FR-9 headline. */
   correlation_hits: number;
+  /** MEDIUM (call + transfer, no IP) — mitigation, not FR-9. */
+  correlation_hits_medium?: number;
   transfers: number;
   high_risk_entities: number;
 };
@@ -155,6 +158,8 @@ export type CorrelationHitDto = {
   entity_id: string;
   entity_label?: string | null;
   window_minutes: number;
+  /** STRONG = call+IP+txn (FR-9); MEDIUM = call+txn only. */
+  tier?: "STRONG" | "MEDIUM";
   transaction: {
     time: string;
     amount?: number | null;
@@ -167,12 +172,12 @@ export type CorrelationHitDto = {
     counterparty_entity_id?: string | null;
     provenance?: Record<string, unknown>;
   };
-  ip_session: {
+  ip_session?: {
     start: string;
     end?: string | null;
     ip?: string | null;
     provenance?: Record<string, unknown>;
-  };
+  } | null;
   explanation?: string;
 };
 
@@ -183,6 +188,7 @@ export type AnalyzeResponse = {
   file_counts: { bank: number; cdr: number; ipdr: number; other: number };
   money_flow_series: { t: string; inflow: number; outflow: number }[];
   correlation_hits: CorrelationHitDto[];
+  correlation_hits_medium?: CorrelationHitDto[];
   top_risk: RiskEntity[];
 };
 
@@ -242,6 +248,11 @@ export type RejectDto = {
   reason?: string | null;
   rows?: number | null;
   rejected?: number | null;
+  /** BANK | CDR | IPDR | CRYPTO, or absent when the source was never identified.
+   *  Declared explicitly: the index signature below types it as `unknown`, which
+   *  is not renderable and silently pushes the error into the consuming screen. */
+  source_type?: string | null;
+  profile?: string | null;
   [key: string]: unknown;
 };
 
@@ -293,8 +304,13 @@ export type QuerySpec = {
 /** NL query result (F1). `rows` is null when the query wasn't understood. */
 export type NlQueryResponse = {
   query: string;
-  /** "llm" = question translated to a validated spec, run locally. "rules" = offline. */
-  engine: "llm" | "rules";
+  /** "llm" | "offline" (local QuerySpec patterns) | "rules" (legacy regex intents). */
+  engine: "llm" | "rules" | "offline";
+  /**
+   * Plain-text answer to the question, composed locally from the spec + rows.
+   * Distinct from `explanation`, which describes the *plan*.
+   */
+  answer: string;
   explanation: string;
   rows: Record<string, unknown>[] | null;
   /** Rows actually returned (capped by `limit`). */

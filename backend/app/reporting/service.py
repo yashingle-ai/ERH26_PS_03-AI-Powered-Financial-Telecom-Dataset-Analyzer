@@ -9,6 +9,7 @@ Every finding carries provenance / references so the output is evidentiary (NFR-
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -76,6 +77,24 @@ def _build_charts(data, out_dir) -> list[tuple[str, str]]:
         charts.append(("Activity over time", p))
 
     return charts
+
+
+def payload_from_investigation(inv, dataset: str, window_minutes: int) -> dict:
+    """Build the report payload from an Investigation.
+
+    `generate` needs `summary` and `window`, neither of which is a field on the
+    Investigation dataclass — so every caller had to know to add them, and the
+    failure mode was a bare `KeyError: 'window'` from deep inside PDF assembly.
+    Keeping that assembly here means one place knows the contract.
+    """
+    data = {f.name: getattr(inv, f.name) for f in dataclasses.fields(inv)}
+    data["summary"] = inv.summary()
+    data["window"] = window_minutes
+    data["dataset"] = dataset
+    # The report prints os.path.basename(input_dir) as the case name; for an uploaded
+    # or renamed dataset that is the more meaningful label.
+    data.setdefault("input_dir", dataset)
+    return data
 
 
 def generate(data: dict, out_dir: str, fmt: str = "pdf") -> str:

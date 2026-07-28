@@ -66,3 +66,9 @@ datasets/metadata/*
 node_modules/
 frontend/build/
 frontend/dist/
+
+# Scratch analysis scripts. Already excluded from the Docker build context; ignored
+# here too because these are written against a live case and end up embedding real
+# identifiers — a complaint reference (complain_gujarat_09__2110624xxxxxxx) was found
+# hardcoded in one. Scratch that names evidence is evidence.
+artifacts/

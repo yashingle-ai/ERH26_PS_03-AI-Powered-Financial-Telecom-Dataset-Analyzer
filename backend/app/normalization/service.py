@@ -40,27 +40,57 @@ def _event_time(mapped: dict, source_tz: str = "IST"):
     return None
 
 
-def _norm_bank(mapped, identity, profile, prov, source_tz="IST") -> dict | None:
-    ts = _event_time(mapped, source_tz) or nz.parse_dt(mapped.get("timestamp_start"), source_tz)
-    # B4: account may be a per-row column (SOA/ICORE) or a header-block identity.
-    acct = str(mapped.get("account_no") or identity.get("account_no") or "").strip()
-    if ts is None or not acct:
-        return None
+def _bank_amount_direction(mapped) -> tuple[float | None, str | None]:
+    """Resolve amount + direction from debit/credit columns or a signed Amount.
+
+    Core-banking statements use separate debit/credit columns. Exchange / P2P
+    wallet ledgers ship a single signed `Amount` (`-19` withdrawal, `0.10`
+    deposit). Without the signed path those ledgers survived mapping then lost
+    the value, or were rejected earlier when the account/timestamp aliases were
+    also missing.
+    """
     debit = nz.amount(mapped.get("debit"))
     credit = nz.amount(mapped.get("credit"))
     if debit:
-        amt, direction = debit, "DEBIT"
-    elif credit:
-        amt, direction = credit, "CREDIT"
-    else:
-        amt, direction = None, None
+        return debit, "DEBIT"
+    if credit:
+        return credit, "CREDIT"
+    signed = nz.amount(mapped.get("amount"))
+    if signed is None:
+        return None, None
+    if signed < 0:
+        return abs(signed), "DEBIT"
+    return signed, "CREDIT"
+
+
+def _bank_asset(mapped) -> str:
+    """INR by default; non-INR Currency columns (USDT/USDC/…) become CRYPTO:TOKEN."""
+    currency = str(mapped.get("attributes.currency") or "").strip().upper()
+    if currency and currency not in {"INR", "RS", "INR.", "RUPEE", "RUPEES"}:
+        return f"CRYPTO:{currency}"
+    return "INR"
+
+
+def _norm_bank(mapped, identity, profile, prov, source_tz="IST") -> dict | None:
+    ts = _event_time(mapped, source_tz) or nz.parse_dt(mapped.get("timestamp_start"), source_tz)
+    # B4: account may be a per-row column (SOA/ICORE) or a header-block identity.
+    # NCRP cells need cleaning (`-:3995…`, `acct\\nLayer : 1`) before they are merge keys.
+    acct = nz.account_no(mapped.get("account_no")) or nz.account_no(identity.get("account_no"))
+    if ts is None or not acct:
+        return None
+    amt, direction = _bank_amount_direction(mapped)
 
     narr = mapped.get("attributes.narration", "")
     mined = narration.mine(narr, profile)
 
     own = [("ACCOUNT_NO", acct)]
+    # registered_mobile is the *header subject*'s phone. On NCRP complaint tables the
+    # header subject is often the complainant while row accounts are mule layers —
+    # attaching that phone to every row would falsely merge victim↔mule. Only bridge
+    # when the event account is the header account (real statements / subject KYC).
     mob = nz.phone(identity.get("registered_mobile"))
-    if mob:
+    header_acct = nz.account_no(identity.get("account_no"))
+    if mob and header_acct and acct == header_acct:
         own.append(("PHONE", mob))
 
     # Prefer a phone counterparty (bridges bank<->telecom, PHONE is a merge key) when the
@@ -76,6 +106,7 @@ def _norm_bank(mapped, identity, profile, prov, source_tz="IST") -> dict | None:
     elif mined.get("counterparty_name"):
         counterparty = ("BENEFICIARY", mined["counterparty_name"])
 
+    currency = str(mapped.get("attributes.currency") or "").strip() or None
     return {
         "event_type": "TRANSACTION",
         "timestamp_start": ts, "timestamp_end": None,
@@ -83,12 +114,27 @@ def _norm_bank(mapped, identity, profile, prov, source_tz="IST") -> dict | None:
         "primary": ("ACCOUNT_NO", acct),
         "counterparty": counterparty,
         "own_identifiers": own,
-        "asset": "INR",
+        "asset": _bank_asset(mapped),
         "attributes": {"narration": narr, "balance": nz.amount(mapped.get("attributes.balance")),
                        "ref_no": mapped.get("attributes.ref_no"), "mode": mined.get("mode"),
-                       "holder": mapped.get("account_holder") or identity.get("account_holder")},
+                       "holder": mapped.get("account_holder") or identity.get("account_holder"),
+                       "currency": currency},
         "provenance": prov,
     }
+
+
+def _msisdn_from_name(name: str) -> str | None:
+    import re as _re
+    m = _re.search(r"(?<!\d)([6-9]\d{9})(?!\d)", name or "")
+    return nz.phone(m.group(1)) if m else None
+
+
+def _clean_device_id(value) -> str | None:
+    if value is None:
+        return None
+    import re as _re
+    d = _re.sub(r"\D", "", str(value))
+    return d if len(d) >= 14 else None
 
 
 def _norm_cdr(mapped, prov, source_tz="IST") -> dict | None:
@@ -107,11 +153,21 @@ def _norm_cdr(mapped, prov, source_tz="IST") -> dict | None:
         from datetime import timedelta
         end = ts + timedelta(seconds=dur)
 
-    # NOTE: in operator CDR the IMEI/IMSI columns belong to the *target subscriber* of the
-    # report, not necessarily this row's A-party (the target may be the called party). So we
-    # keep IMEI/IMSI as attributes only and do NOT use them to merge entities — otherwise
-    # every number that ever called the target collapses into one entity.
+    # IMEI/IMSI on operator CDR belong to the *report target*, not every A-party.
+    # Attach as merge keys only when A-party is that target: explicit target_phone
+    # column, or MSISDN embedded in the filename (common LEA export naming).
+    # Do not put Target/A aliases on both entity_phone and target_phone — field_mapper
+    # keeps one alias→target and the overlap previously nullified entity_phone.
     own = [("PHONE", a)]
+    subject = nz.phone(mapped.get("target_phone")) or _msisdn_from_name(
+        str((prov or {}).get("source_file") or ""))
+    if subject and a == subject:
+        imei = _clean_device_id(mapped.get("imei"))
+        imsi = _clean_device_id(mapped.get("imsi"))
+        if imei:
+            own.append(("IMEI", imei))
+        if imsi:
+            own.append(("IMSI", imsi))
 
     return {
         "event_type": "CALL",
@@ -130,6 +186,21 @@ def _norm_cdr(mapped, prov, source_tz="IST") -> dict | None:
     }
 
 
+def _ipv6_prefix64(addr: str | None) -> str | None:
+    """Subscriber-scoped IPv6 network (first 4 hextets). None for IPv4 / unparseable."""
+    if not addr or ":" not in str(addr):
+        return None
+    try:
+        import ipaddress
+        net = ipaddress.ip_network(f"{addr}/64", strict=False)
+        return str(net.network_address)
+    except ValueError:
+        parts = str(addr).split(":")
+        if len(parts) >= 4:
+            return ":".join(parts[:4]) + "::"
+        return None
+
+
 def _norm_ipdr(mapped, prov, source_tz="IST") -> dict | None:
     ts = _event_time(mapped, source_tz)
     if ts is None:
@@ -141,25 +212,28 @@ def _norm_ipdr(mapped, prov, source_tz="IST") -> dict | None:
     sub = nz.phone(mapped.get("entity_phone"))       # may be absent in IP-range IPDR
     if not sub:
         # C2: derive subscriber MSISDN from the filename (e.g. "9099102222_...ipdr.xlsx")
-        import re as _re
-        m = _re.search(r"(?<!\d)([6-9]\d{9})(?!\d)", prov.get("source_file", ""))
-        if m:
-            sub = nz.phone(m.group(1))
+        sub = _msisdn_from_name(prov.get("source_file", ""))
     pub = nz.ip(mapped.get("ip_public"))
-    if not sub and not pub:
+    priv = nz.ip(mapped.get("ip_private"))
+    if not sub and not pub and not priv:
         return None
 
     own = []
     if sub:
         own.append(("PHONE", sub))
+    # Prefer public IP as the displayed address; still record private/source for /64 link.
     if pub:
         own.append(("IP", pub))
-    if mapped.get("imei"):
-        own.append(("IMEI", str(mapped["imei"]).strip()))
-    if mapped.get("imsi"):
-        own.append(("IMSI", str(mapped["imsi"]).strip()))
+    elif priv:
+        own.append(("IP", priv))
+    imei = _clean_device_id(mapped.get("imei"))
+    imsi = _clean_device_id(mapped.get("imsi"))
+    if imei:
+        own.append(("IMEI", imei))
+    if imsi:
+        own.append(("IMSI", imsi))
 
-    primary = ("PHONE", sub) if sub else ("IP", pub)
+    primary = ("PHONE", sub) if sub else (("IP", pub) if pub else ("IP", priv))
     return {
         "event_type": "IP_SESSION",
         "timestamp_start": ts, "timestamp_end": end,
@@ -168,7 +242,7 @@ def _norm_ipdr(mapped, prov, source_tz="IST") -> dict | None:
         "counterparty": None,
         "own_identifiers": own,
         "asset": None,
-        "attributes": {"public_ip": pub, "private_ip": nz.ip(mapped.get("ip_private")),
+        "attributes": {"public_ip": pub, "private_ip": priv,
                        "ip_version": mapped.get("attributes.ip_version"),
                        "port": mapped.get("attributes.port"),
                        "bytes_up": mapped.get("attributes.bytes_up"),
@@ -176,6 +250,50 @@ def _norm_ipdr(mapped, prov, source_tz="IST") -> dict | None:
                        "dest_ip": nz.ip(mapped.get("attributes.dest_ip"))},
         "provenance": prov,
     }
+
+
+def enrich_ipdr_prefix_phones(events: list[dict]) -> int:
+    """Attach MSISDN to IP-only IPDR rows that share an IPv6 /64 with a phone-bearing session.
+
+    TRAI IPDR lists the delegated /64 as Source IP; IP-range exports list a host inside
+    that /64. Without this pass the host rows stay IP-primary and never join the
+    subscriber entity that already has the phone — so CALL+IP correlation cannot see them.
+    Returns how many sessions were upgraded.
+    """
+    prefix_to_phone: dict[str, str] = {}
+    for ev in events:
+        if ev.get("event_type") != "IP_SESSION":
+            continue
+        phone = next((v for t, v in (ev.get("own_identifiers") or []) if t == "PHONE"), None)
+        if not phone:
+            continue
+        attrs = ev.get("attributes") or {}
+        for addr in (attrs.get("public_ip"), attrs.get("private_ip")):
+            p64 = _ipv6_prefix64(addr)
+            if p64:
+                prefix_to_phone.setdefault(p64, phone)
+
+    upgraded = 0
+    for ev in events:
+        if ev.get("event_type") != "IP_SESSION":
+            continue
+        if any(t == "PHONE" for t, _ in (ev.get("own_identifiers") or [])):
+            continue
+        attrs = ev.get("attributes") or {}
+        phone = None
+        for addr in (attrs.get("public_ip"), attrs.get("private_ip")):
+            p64 = _ipv6_prefix64(addr)
+            if p64 and p64 in prefix_to_phone:
+                phone = prefix_to_phone[p64]
+                break
+        if not phone:
+            continue
+        own = list(ev.get("own_identifiers") or [])
+        own.insert(0, ("PHONE", phone))
+        ev["own_identifiers"] = own
+        ev["primary"] = ("PHONE", phone)
+        upgraded += 1
+    return upgraded
 
 
 def _norm_crypto(mapped, prov, source_tz="UTC") -> dict | None:
@@ -266,6 +384,12 @@ def normalize_parsed_files(parsed_files: list) -> tuple[list[dict], list[dict]]:
                             "profile": pf.profile_id, "rows": len(pf.records),
                             "rejected": file_rejects,
                             "reason": "row missing timestamp / primary identifier"})
+
+    upgraded = enrich_ipdr_prefix_phones(events)
+    if upgraded:
+        from ..core.logging_config import get_logger
+        get_logger(__name__).info(
+            "IPDR /64 enrichment: attached MSISDN to %d IP-only sessions", upgraded)
 
     events, dup = _dedupe(events)
     if dup:

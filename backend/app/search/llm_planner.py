@@ -139,7 +139,10 @@ def plan(question: str, *, model: str | None = None) -> QuerySpec | None:
     vocab = json.dumps(schema_vocabulary(), indent=2)
 
     try:
-        client = genai.Client()          # reads GEMINI_API_KEY / GOOGLE_API_KEY
+        # Bound the wait so a DNS/network hang fails fast into the offline planner
+        # instead of blocking Ask for a minute-plus (verification F2, 2026-07-27).
+        timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "15000"))
+        client = genai.Client(http_options=types.HttpOptions(timeout=timeout_ms))
         response = client.models.generate_content(
             model=model or os.getenv("GEMINI_MODEL") or DEFAULT_MODEL,
             contents=question,

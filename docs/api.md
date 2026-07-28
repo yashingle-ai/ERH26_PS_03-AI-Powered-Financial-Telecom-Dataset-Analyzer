@@ -5,10 +5,8 @@ FastAPI service. Run: `./.venv/bin/uvicorn backend.app.api.main:app --reload` ·
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Liveness → `{"status":"ok"}` |
-| GET | `/datasets` | List dataset folders under `datasets/raw/` |
-| POST | `/analyze` | Body `{dataset, window_minutes}` → summary + correlation hits + top risk |
-| GET | `/entities/{ds}?window&limit&offset` | Paginated entities with risk & flags |
-| GET | `/graph/{ds}?window` | Network payload `{nodes, edges}` |
+| GET | `/v1/data-quality/{ds}` | Ledger breaks + per-file ingestion rejects |
+| POST | `/v1/query/{ds}` | Body `{q, window_minutes, engine?}` → `{answer, explanation, rows, total, spec, …}`. `answer` is composed locally from the plan + rows; case data never goes to the LLM. |
 
 Results are cached per `(dataset, window)`. This API is optional — the dashboard and CLI cover the
 core workflow; the API exists for programmatic/integration use.

@@ -46,6 +46,46 @@ def _safe_destination(dest: Path, member: str) -> Path | None:
     return target
 
 
+def _zip_passwords() -> list[bytes]:
+    """Optional analyst-supplied passwords for locked archive members (G4).
+
+    `ERAKSHAK_ZIP_PASSWORD` (single) or `ERAKSHAK_ZIP_PASSWORDS` (comma-separated).
+    Tried in order after an unlocked open fails.
+    """
+    import os
+    raw = os.getenv("ERAKSHAK_ZIP_PASSWORDS") or os.getenv("ERAKSHAK_ZIP_PASSWORD") or ""
+    out: list[bytes] = []
+    for part in raw.split(","):
+        p = part.strip()
+        if p:
+            out.append(p.encode("utf-8"))
+    return out
+
+
+def _write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path,
+                  passwords: list[bytes] | None = None) -> None:
+    """Write one member, trying optional passwords when the member is encrypted."""
+    passwords = passwords or []
+    try:
+        with zf.open(info) as src, target.open("wb") as fh:
+            fh.write(src.read())
+        return
+    except RuntimeError as e:
+        if "encrypted" not in str(e).lower() and "password" not in str(e).lower():
+            raise
+        if not passwords:
+            raise
+    for pwd in passwords:
+        try:
+            zf.setpassword(pwd)
+            with zf.open(info) as src, target.open("wb") as fh:
+                fh.write(src.read())
+            return
+        except RuntimeError:
+            continue
+    raise RuntimeError("encrypted")
+
+
 def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
                     max_depth: int = 3, _depth: int = 0,
                     _budget: list[int] | None = None) -> list[Path]:
@@ -82,13 +122,12 @@ def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
                     continue
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(info) as src, target.open("wb") as fh:
-                        fh.write(src.read())
+                    _write_member(zf, info, target, passwords=_zip_passwords())
                 except RuntimeError as e:
                     # Operators routinely send password-protected archives; zipfile raises
                     # a bare RuntimeError for those. One locked member must not lose the
                     # rest of the archive, let alone abort the case.
-                    if "encrypted" in str(e).lower():
+                    if "encrypted" in str(e).lower() or "password" in str(e).lower():
                         encrypted += 1
                     else:
                         log.warning("member %s unreadable: %s", info.filename, e)

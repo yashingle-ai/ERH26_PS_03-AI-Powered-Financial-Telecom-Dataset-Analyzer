@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from .core.logging_config import get_logger
 from .correlation import timeline_builder, window_correlator
 from .detection import service as detection
+from .entity_resolution import common_imei as er_common_imei
 from .entity_resolution import mapping as er_mapping
 from .entity_resolution import service as er
 from .graph import money_flow
@@ -36,7 +37,8 @@ class Investigation:
     entities: dict = field(default_factory=dict)
     node_to_entity: dict = field(default_factory=dict)
     timeline: dict = field(default_factory=dict)
-    correlation_hits: list = field(default_factory=list)
+    correlation_hits: list = field(default_factory=list)          # STRONG only (FR-9)
+    correlation_hits_medium: list = field(default_factory=list)   # MEDIUM (call+txn, no IP)
     transfers: list = field(default_factory=list)
     risk: dict = field(default_factory=dict)
     graph: dict = field(default_factory=dict)
@@ -56,7 +58,9 @@ class Investigation:
             "rejected_rows": sum(r.get("rejected", r.get("rows", 0)) for r in self.rejects),
             "reject_entries": len(self.rejects),
             "entities": len(core),
+            # Headline FR-9 count — STRONG only. Do not inflate with MEDIUM.
             "correlation_hits": len(self.correlation_hits),
+            "correlation_hits_medium": len(self.correlation_hits_medium),
             "transfers": len(self.transfers),
             "high_risk_entities": len(high),
         }
@@ -81,6 +85,8 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
     # Merge analyst-supplied KYC/entity-map links (account<->phone/wallet) so cross-domain
     # correlation can fire. LINK events only contribute merge edges — not timeline/detection.
     link_events = er_mapping.load_link_events(input_dir)
+    # LEA Common-IMEI reports in the case folder are the same kind of bridge, auto-discovered.
+    link_events += er_common_imei.load_common_imei_links(input_dir, inv.events)
     inv.entities, inv.node_to_entity = er.resolve(inv.events + link_events)
     er.assign_entities(inv.events, inv.node_to_entity, inv.entities)
 
@@ -92,8 +98,10 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
 
 def apply_analysis(inv: Investigation, window_minutes: int | None = None) -> Investigation:
     """Window-DEPENDENT stages: correlation, detection/risk, graph."""
-    inv.correlation_hits = window_correlator.correlate(
+    all_hits = window_correlator.correlate(
         inv.timeline, inv.entities, inv.events, window_minutes)
+    inv.correlation_hits, inv.correlation_hits_medium = window_correlator.split_by_tier(all_hits)
+    # Risk coincidence_count uses STRONG only — MEDIUM must not inflate the score.
     inv.risk = detection.detect(inv.events, inv.transfers, inv.correlation_hits, inv.entities)
     inv.graph = graph_service.build(inv.events, inv.entities, inv.risk)
     return inv

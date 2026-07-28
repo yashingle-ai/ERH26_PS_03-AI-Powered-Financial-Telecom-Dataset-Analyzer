@@ -17,6 +17,9 @@ field_map:
   entity_phone:
     aliases: ["Target No", "Target Number", "A Party No"]
     type: phone
+  target_phone:
+    aliases: ["Target No", "Target Number", "Target MSISDN"]
+    type: phone
   counterparty_phone:
     aliases: ["B Party No", "B Party Number"]
     type: phone

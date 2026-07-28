@@ -21,6 +21,10 @@ field_map:
   entity_phone:
     aliases: ["Target /A PARTY NUMBER", "A PARTY NUMBER", "Mobile_No"]
     type: phone
+  # Shared Target/A alias is OK — field_mapper can fill multiple targets from one header.
+  target_phone:
+    aliases: ["Target /A PARTY NUMBER", "Target No", "Target Number", "Target MSISDN"]
+    type: phone
   counterparty_phone:
     aliases: ["B PARTY NUMBER", "Other_Party_No"]
     type: phone

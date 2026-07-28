@@ -16,9 +16,14 @@ def read(path: str, skiprows: int = 0) -> pd.DataFrame:
     # "Call Initiation Time", and normalization then rejects the row for a missing phone.
     # On the real case data this silently dropped whole files — 42,873 of 42,873 rows in the
     # largest. Forcing index_col=False keeps the columns aligned with the header.
+    # sep=None + engine="python" lets pandas sniff the delimiter. IPDR range
+    # exports arrive as tab-separated `.txt` with a header like
+    # `IP\tVALUE\tF DATE\tF TIME\t…`. The default comma separator kept that as
+    # one column, so profile detection saw no `VALUE`/`F DATE` and the file was
+    # rejected as an unrecognized source — 9 of 9 IPDR rows on fir-65-2024.
     return pd.read_csv(path, dtype=str, keep_default_na=False, skipinitialspace=True,
                        skiprows=skiprows, on_bad_lines="skip", engine="python",
-                       index_col=False)
+                       sep=None, index_col=False)
 
 
 def read_lines(path: str, n: int = 40) -> list[str]:

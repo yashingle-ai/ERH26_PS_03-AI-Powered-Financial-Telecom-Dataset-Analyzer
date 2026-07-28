@@ -71,25 +71,92 @@ _SAS_DATETIME = re.compile(
     r"^(\d{1,2}[A-Za-z]{3}\d{2,4}):(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)$"
 )
 
+# NCRP complaint PDFs split date/time across lines:
+#   "09-06-2024\nHR: 3\nMIN: 50\nAM/PM: PM"  ->  09-06-2024 15:50:00
+_NCRP_COMPLAINT_DT = re.compile(
+    r"^(?P<date>\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
+    r"(?:\s*HR:\s*(?P<hr>\d{1,2}))?"
+    r"(?:\s*MIN:\s*(?P<mn>\d{1,2}))?"
+    r"(?:\s*AM/PM:\s*(?P<ap>AM|PM))?$",
+    re.I,
+)
+
+
+def _preprocess_dt_string(s: str) -> str:
+    """Normalize quirky bank/complaint datetime strings before dateutil."""
+    s = re.sub(r"\s+", " ", s).strip()
+    m = _SAS_DATETIME.match(s)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"  # -> "11DEC2019 09:07:02"
+    m = _NCRP_COMPLAINT_DT.match(s)
+    if m and (m.group("hr") is not None or m.group("ap") is not None):
+        date = m.group("date")
+        if m.group("hr") is None:
+            return date
+        h = int(m.group("hr"))
+        mn = int(m.group("mn") or 0)
+        ap = (m.group("ap") or "").upper()
+        if ap == "PM" and h < 12:
+            h += 12
+        elif ap == "AM" and h == 12:
+            h = 0
+        return f"{date} {h:02d}:{mn:02d}:00"
+    return s
+
+
+#: Two arbitrary, different defaults. dateutil fills missing components from `default`,
+#: so a value carrying no date yields a different date under each — which is how we tell
+#: "13:45:00" apart from a real timestamp without writing a format zoo.
+_DT_PROBE_A = datetime(2001, 2, 3)
+_DT_PROBE_B = datetime(2004, 5, 6)
+
 
 def parse_dt(value, source_tz: str = "IST") -> datetime | None:
+    """Parse a timestamp, or return None if the value cannot supply a real date.
+
+    A time-only value ("13:45:00") is refused rather than parsed. dateutil would
+    silently fill in *today*, so a 2019 statement row would enter the timeline dated
+    today — and, because every such row gets the same fabricated date, they cluster
+    within minutes of each other and can manufacture correlation hits that never
+    happened. Returning None makes the row a counted reject instead, which is the
+    rule everywhere else here: never drop or invent data silently.
+
+    Date-only values are fine — they parse to midnight, which is a real date.
+    """
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
         dt = value
     else:
-        s = str(value).strip().strip("'\"")
-        m = _SAS_DATETIME.match(s)
-        if m:
-            s = f"{m.group(1)} {m.group(2)}"      # -> "11DEC2019 09:07:02"
+        s = _preprocess_dt_string(str(value).strip().strip("'\""))
         # ISO (yyyy-mm-dd...) must NOT use dayfirst or dateutil swaps month/day.
         # dd/mm/yyyy (Indian bank statements) requires dayfirst=True.
         iso_like = bool(re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", s))
         try:
-            dt = dtparser.parse(s, dayfirst=not iso_like, tzinfos=_TZOFFSETS)
+            dt = dtparser.parse(s, dayfirst=not iso_like, tzinfos=_TZOFFSETS,
+                                default=_DT_PROBE_A)
+            alt = dtparser.parse(s, dayfirst=not iso_like, tzinfos=_TZOFFSETS,
+                                 default=_DT_PROBE_B)
         except (ValueError, OverflowError, TypeError):
             return None
+        if dt.date() != alt.date():      # the date came from the default, not the value
+            return None
     return _to_canonical(dt, source_tz)
+
+
+def account_no(value) -> str | None:
+    """Clean NCRP / statement account cells before they become merge keys.
+
+    Complaint tables use `-:39951540286` and multi-line `201029737717\\nLayer : 1`.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s = s.splitlines()[0].strip()
+    s = re.sub(r"^[\-:]+\s*", "", s).strip()
+    return s or None
 
 
 def _digits(v) -> str:

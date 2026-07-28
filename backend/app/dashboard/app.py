@@ -68,6 +68,7 @@ def run_pipeline(input_dir: str, window: int, include_pdf: bool = False):
         "node_to_entity": inv.node_to_entity,
         "timeline": inv.timeline,
         "correlation_hits": inv.correlation_hits,
+        "correlation_hits_medium": inv.correlation_hits_medium,
         "transfers": inv.transfers,
         "risk": inv.risk,
         "graph_payload": inv.graph["payload"],
@@ -154,13 +155,14 @@ with tabs[0]:
     c[0].metric("Files", S["files"])
     c[1].metric("Events", S["events"])
     c[2].metric("Entities", S["entities"])
-    c[3].metric("Correlation hits", S["correlation_hits"])
+    c[3].metric("STRONG hits (FR-9)", S["correlation_hits"])
     c[4].metric("High-risk", S["high_risk_entities"])
-    c = st.columns(4)
+    c = st.columns(5)
     c[0].metric("Transactions", S["transactions"])
     c[1].metric("Calls", S["calls"])
     c[2].metric("IP sessions", S["ip_sessions"])
-    c[3].metric("Rejected rows", S["rejected_rows"])
+    c[3].metric("MEDIUM hits", S.get("correlation_hits_medium", 0))
+    c[4].metric("Rejected rows", S["rejected_rows"])
 
     st.subheader("Top risk entities")
     rows = sorted(data["risk"].values(), key=lambda r: -r["risk_score"])[:15]
@@ -239,16 +241,29 @@ with tabs[3]:
 
 # ---- Correlations ----
 with tabs[4]:
-    st.subheader(f"Call + IP + transfer coincidences (within {window} min)")
+    st.subheader(f"STRONG — call + IP + transfer (within {window} min)")
     hits = data["correlation_hits"]
     if not hits:
-        st.info("No coincidences at this window.")
+        st.info("No STRONG (FR-9) coincidences at this window.")
     for h in sorted(hits, key=lambda x: -(x["transaction"].get("amount") or 0)):
-        with st.expander(f"{h['entity_label']} — ₹{h['transaction'].get('amount')} "
+        with st.expander(f"STRONG · {h['entity_label']} — ₹{h['transaction'].get('amount')} "
                          f"@ {h['transaction']['time']}"):
             st.write(h["explanation"])
-            st.json({"transaction": h["transaction"], "call": h["call"],
-                     "ip_session": h["ip_session"]}, expanded=False)
+            st.json({"tier": h.get("tier", "STRONG"), "transaction": h["transaction"],
+                     "call": h["call"], "ip_session": h["ip_session"]}, expanded=False)
+
+    st.subheader(f"MEDIUM — call + transfer only (within {window} min)")
+    st.caption("Two-leg coincidence when no overlapping IP session is available. "
+               "Not FR-9 — do not treat as STRONG.")
+    medium = data.get("correlation_hits_medium") or []
+    if not medium:
+        st.info("No MEDIUM coincidences at this window.")
+    for h in sorted(medium, key=lambda x: -(x["transaction"].get("amount") or 0)):
+        with st.expander(f"MEDIUM · {h['entity_label']} — ₹{h['transaction'].get('amount')} "
+                         f"@ {h['transaction']['time']}"):
+            st.write(h["explanation"])
+            st.json({"tier": h.get("tier", "MEDIUM"), "transaction": h["transaction"],
+                     "call": h["call"]}, expanded=False)
 
 # ---- Search ----
 with tabs[5]:
@@ -334,16 +349,59 @@ with tabs[7]:
 
 # ---- Ask / NL query (F1) ----
 with tabs[8]:
-    st.subheader("Natural-language query (rule-based)")
+    st.subheader("Natural-language query")
     st.caption("Examples: 'transfers over 100000', 'calls to 9099102222', "
-               "'events on 2024-08-01', 'high risk entities'")
+               "'events on 2024-08-01', 'high risk entities', "
+               "'who did 9702000558 call most often?'")
     nlq = st.text_input("Ask")
     if nlq:
-        from backend.app.search import nl_query
-        answer = nl_query.answer(nlq, data)
-        st.write(answer["explanation"])
-        if answer.get("rows") is not None:
-            st.dataframe(pd.DataFrame(answer["rows"]), use_container_width=True, hide_index=True)
+        from backend.app.search import answer as answer_mod
+        from backend.app.search import dsl, llm_planner, nl_query, offline_planner
+
+        class _Inv:
+            def __init__(self, d):
+                self.events = d["events"]
+                self.entities = d["entities"]
+                self.risk = d["risk"]
+                self.correlation_hits = d["correlation_hits"]
+
+        # Prefer LLM → offline QuerySpec patterns → legacy rules.
+        # The plain-text answer is always composed locally — never by the model.
+        spec = None
+        engine = "rules"
+        try:
+            spec = llm_planner.plan(nlq)
+        except ValueError as exc:
+            st.error(str(exc))
+            spec = False
+        if spec:
+            engine = "llm"
+        elif spec is None:
+            spec = offline_planner.plan(nlq)
+            if spec is not None:
+                engine = "offline"
+
+        if spec:
+            out = dsl.execute(spec, _Inv(data))
+            plain = answer_mod.compose_answer(spec, out)
+            st.success(plain)
+            st.caption(f"Engine · {engine} · {spec.explanation or 'structured query'}")
+            with st.expander("Audit trail — generated QuerySpec"):
+                st.json(spec.model_dump(mode="json"))
+            if out.get("rows") is not None:
+                st.dataframe(pd.DataFrame(out["rows"]), use_container_width=True, hide_index=True)
+        elif spec is None:
+            result = nl_query.answer(nlq, data)
+            plain = answer_mod.compose_answer(
+                None,
+                {"rows": result.get("rows"), "total": result.get("total"),
+                 "truncated": result.get("truncated")},
+                rules_explanation=result["explanation"],
+            )
+            st.success(plain)
+            st.caption("Engine · offline rules (no matching QuerySpec pattern)")
+            if result.get("rows") is not None:
+                st.dataframe(pd.DataFrame(result["rows"]), use_container_width=True, hide_index=True)
 
 # ---- Quality: rejects (B3), balance breaks (A5), fuzzy suggestions (C3) ----
 with tabs[9]:

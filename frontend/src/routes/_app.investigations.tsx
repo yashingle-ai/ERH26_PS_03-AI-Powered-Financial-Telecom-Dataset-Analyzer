@@ -9,11 +9,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useDatasets } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
 import { mapCaseFromAnalyze } from "@/lib/mappers";
-import { useQueries } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import type { AnalyzeResponse } from "@/lib/api";
+import type { Case } from "@/lib/types";
 
 export const Route = createFileRoute("/_app/investigations")({
   head: () => ({
@@ -25,13 +26,14 @@ export const Route = createFileRoute("/_app/investigations")({
   component: InvestigationsPage,
 });
 
-function statusChip(status: string) {
-  const map: Record<string, string> = {
+function statusChip(status: Case["status"]) {
+  const map: Record<Case["status"], string> = {
     ready: "bg-primary/15 text-primary border-primary/30",
     analyzing: "bg-[color:var(--risk-med)]/15 text-[color:var(--risk-med)] border-[color:var(--risk-med)]/30",
-    ingested: "bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20",
+    idle: "bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20",
+    error: "bg-[color:var(--risk-high)]/15 text-[color:var(--risk-high)] border-[color:var(--risk-high)]/30",
   };
-  return map[status] ?? map.ingested;
+  return map[status] ?? map.idle;
 }
 
 function InvestigationsPage() {
@@ -41,37 +43,67 @@ function InvestigationsPage() {
   const { setDataset, windowMinutes } = useInvestigation();
   const { data: dsData, isLoading: loadingList, error: listError } = useDatasets();
   const datasets = dsData?.datasets || [];
+  const queryClient = useQueryClient();
 
-  const analyses = useQueries({
-    queries: datasets.map((ds) => ({
-      queryKey: ["analyze", ds, windowMinutes],
-      queryFn: () => api.analyze(ds, windowMinutes),
-      staleTime: 60_000,
-    })),
-  });
-
+  // Do NOT fire analyze for every dataset here — that used to kick off N concurrent
+  // full pipeline runs. Status comes from whatever the Overview (or Ask) page has
+  // already cached for the selected window.
   const cases = useMemo(() => {
-    return datasets.map((ds, i) => {
-      const result = analyses[i]?.data;
-      if (!result) {
+    return datasets.map((ds) => {
+      const key = ["analyze", ds, windowMinutes] as const;
+      const state = queryClient.getQueryState(key);
+      const cached = queryClient.getQueryData<AnalyzeResponse>(key);
+      if (cached) {
+        return mapCaseFromAnalyze(ds, cached);
+      }
+      if (state?.status === "error") {
         return {
           id: ds,
           code: ds.toUpperCase(),
           title: `Dataset · ${ds}`,
-          status: analyses[i]?.isLoading ? "analyzing" : "ingested",
+          status: "error" as const,
           files: { bank: 0, cdr: 0, ipdr: 0 },
           entities: 0,
           events: 0,
           hits: 0,
           moneyMoved: 0,
           topRisk: 0,
-          updated: analyses[i]?.isError ? "error" : "…",
+          updated: "failed",
           lead: "API pipeline",
-        } as const;
+        };
       }
-      return mapCaseFromAnalyze(ds, result);
+      if (state?.fetchStatus === "fetching") {
+        return {
+          id: ds,
+          code: ds.toUpperCase(),
+          title: `Dataset · ${ds}`,
+          status: "analyzing" as const,
+          files: { bank: 0, cdr: 0, ipdr: 0 },
+          entities: 0,
+          events: 0,
+          hits: 0,
+          moneyMoved: 0,
+          topRisk: 0,
+          updated: "…",
+          lead: "API pipeline",
+        };
+      }
+      return {
+        id: ds,
+        code: ds.toUpperCase(),
+        title: `Dataset · ${ds}`,
+        status: "idle" as const,
+        files: { bank: 0, cdr: 0, ipdr: 0 },
+        entities: 0,
+        events: 0,
+        hits: 0,
+        moneyMoved: 0,
+        topRisk: 0,
+        updated: "not analyzed",
+        lead: "API pipeline",
+      };
     });
-  }, [datasets, analyses]);
+  }, [datasets, queryClient, windowMinutes]);
 
   const list = cases.filter((c) => {
     const matchesQ = (c.title + c.code).toLowerCase().includes(q.toLowerCase());
@@ -84,15 +116,16 @@ function InvestigationsPage() {
     return matchesQ && matchesStatus && matchesRisk;
   });
 
-  const highRisk = analyses.reduce((n, a) => n + (a.data?.summary.high_risk_entities || 0), 0);
-  const totalEvents = analyses.reduce((n, a) => n + (a.data?.summary.events || 0), 0);
+  const ready = cases.filter((c) => c.status === "ready");
+  const highRisk = ready.reduce((n, c) => n + (c.topRisk >= 70 ? 1 : 0), 0);
+  const totalEvents = ready.reduce((n, c) => n + c.events, 0);
 
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
         eyebrow="Case registry"
         title="Investigations"
-        description="Datasets under datasets/raw/. Open one to run the fusion pipeline via the API."
+        description="Datasets under datasets/raw/. Open one to run the fusion pipeline — this list does not analyze every dataset at once."
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-2">
@@ -108,8 +141,8 @@ function InvestigationsPage() {
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           { label: "Open cases", value: String(datasets.length), trail: "raw datasets" },
-          { label: "Events fused", value: totalEvents.toLocaleString("en-IN"), trail: "across analyzed sets" },
-          { label: "High-risk entities", value: String(highRisk), trail: "score ≥ 70" },
+          { label: "Events fused", value: totalEvents.toLocaleString("en-IN"), trail: "analyzed sets only" },
+          { label: "High-risk (top)", value: String(highRisk), trail: "among ready cases" },
           { label: "API", value: "live", trail: "JWT · /v1" },
         ].map((k) => (
           <div key={k.label} className="rounded-lg border border-border bg-surface/60 p-4">
@@ -139,7 +172,7 @@ function InvestigationsPage() {
             className="h-9 border-border bg-surface pl-8 text-mono text-[13px]"
           />
         </div>
-        {["All", "Ready", "Analyzing", "Ingested"].map((s) => (
+        {["All", "Ready", "Analyzing", "Idle", "Error"].map((s) => (
           <Button
             key={s}
             variant={statusFilter === s.toLowerCase() || (s === "All" && statusFilter === "all") ? "secondary" : "ghost"}
@@ -159,7 +192,7 @@ function InvestigationsPage() {
             <Badge
               key={b.label}
               variant="outline"
-              className={`text-mono h-7 cursor-pointer rounded border-border text-[10px] uppercase tracking-widest transition-colors ${riskFilter === b.k ? 'bg-primary/10 border-primary/40' : 'bg-transparent hover:bg-accent/30'}`}
+              className={`text-mono h-7 cursor-pointer rounded border-border text-[10px] uppercase tracking-widest transition-colors ${riskFilter === b.k ? "bg-primary/10 border-primary/40" : "bg-transparent hover:bg-accent/30"}`}
               onClick={() => setRiskFilter(riskFilter === b.k ? null : b.k)}
             >
               <span className="mr-1.5 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: b.c }} />
