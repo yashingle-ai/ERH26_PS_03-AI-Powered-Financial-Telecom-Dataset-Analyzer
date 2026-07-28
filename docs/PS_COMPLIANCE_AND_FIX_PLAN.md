@@ -17,27 +17,27 @@ so.
 
 | FR | Requirement | Status | Measured evidence |
 |---|---|---|---|
-| 1 | Parse bank statements (Excel/PDF/CSV) | 🟡 works, lossy | 78 BANK files → **35,870 txns**; 4,665 rows still rejected |
+| 1 | Parse bank statements (Excel/PDF/CSV) | 🟡 works, lossy | **122** BANK files → **36,281 txns** (was 78 / 35,870) |
 | 2 | Parse CDR | 🟢 works | 90 files → **203,046 calls**; 24% rejects are mostly true duplicates |
 | 3 | Parse IPDR | 🔴 barely | 12 files → **69 sessions**; 11 of 18 rows rejected |
-| 4 | Schema mapping / auto-detection | 🔴 largest gap | **722 of 905 files (80%) unrecognised** |
-| 5 | Row-level reject diagnostics | 🟢 works | 139,874 rows itemised in 855 groups via `/v1/data-quality` |
-| 6 | Unified entity model | 🟡 partial | 4,132 entities; **ACCOUNT_NO+PHONE = 0** |
+| 4 | Schema mapping / auto-detection | 🟡 improving | **712 of 939 unrecognised** (was 747 of 930); 94 files now claimed by the mappability fallback, all flagged for review |
+| 5 | Row-level reject diagnostics | 🟢 works | **139,534** rows itemised via `/v1/data-quality`; summary now splits `blank_rows` / `unmapped_rows` |
+| 6 | Unified entity model | 🟡 partial | **4,182** entities; **ACCOUNT_NO+PHONE = 1** (was 0) |
 | 7 | Timestamp normalisation | 🟢 works | IST canonical; time-only hazard closed 28 Jul |
 | 8 | Unified timeline | 🟢 works | per-entity, bisect-indexed |
 | 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0 | evidence-blocked, proven at source-file level. MEDIUM = 2 |
-| 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,849 · BENEFICIARY 9,816 · IMEI 30 · IMSI 32 · IP 6 · **account↔phone 0** |
+| 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,849 · BENEFICIARY 9,816 · IMEI 30 · IMSI 32 · IP 6 · **ACCOUNT_NO 549** (was 499) · **account↔phone 1** (was 0) |
 | 11 | Rules + ML detection | 🟡 works on synthetic only | 6 rules fire on `demo`; **0 high-risk on real** |
 | 12 | Risk scores | 🟡 same cause as FR-11 | demo 3 high / 11 med / 75 low; real **0 high** |
 | 13 | Mule-account signatures | 🟡 same cause as FR-11 | fires on `demo` only |
 | 14 | Money-flow + comms graphs, drill-down | 🟢 works | 8,435 nodes on real data, HTTP 200 |
 | 15 | Filter / search (entity, amount, time, location) | 🟡 partial | entity/amount/time yes; **location unverified** |
-| 16 | Forensic report (PDF/Word) | 🟡 works but unreachable | generated 93 KB PDF + 123 KB DOCX; **no HTTP endpoint** |
-| 17 | STR generation (bonus) | 🟡 code exists, untested | referenced in `reporting/service.py` |
+| 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
+| 17 | STR generation (bonus) | 🟡 reachable, content unreviewed | ships inside the report; the STR section itself has not been read against a real case |
 | 18 | Risk heat maps (bonus) | 🔴 not implemented | zero matches anywhere in the codebase |
 | 19 | Natural-language query (bonus) | 🟢 works | Gemini 6/6 planned; offline fallback; plain-text answers |
 
-**8 green · 7 amber · 4 red.**
+**9 green · 7 amber · 3 red** (was 8 / 7 / 4 at the start of the fix work).
 
 ---
 
@@ -48,16 +48,48 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 | # | Fix | FRs | Status |
 |---|---|---|---|
 | F3 | Expose the forensic report over HTTP | 16, 17 | 🟢 **DONE** `7d20672` — valid PDF (`%PDF`, 92,935 B) + DOCX (`PK`, 123,073 B); bad fmt → 400 |
-| F4a | Header-block mobile lost to a space | 6, 10 | 🟢 **DONE** `7d20672` — country-code-only extractions **3-of-4 → 0** on real data |
-| F2a | NCRP / Cyber Police Portal profile | 1, 4 | 🟡 **PARTIAL** — matches 5 files, mapping verified correct; yield capped by blank padding (see below) |
-| F2b | Split stacked tables inside one grid (gap G3) | 4, 1 | 🟡 **IN VERIFICATION** — fires on real PDFs; over-split + identity-stranding fixed, awaiting a full re-measure |
-| F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | **OPEN** |
-| F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** |
-| F8 | Distinguish blank padding rows from real reject reasons | 5 | **OPEN** — `rejected_rows` currently overstates the loss |
-| F5 | Risk heat map | 18 | **OPEN** |
+| F4a | Header-block mobile lost to a space | 6, 10 | 🟢 **DONE** `7d20672` — country-code-only extractions **3-of-4 → 0** |
+| F2a | NCRP / Cyber Police Portal profile | 1, 4 | 🟢 **DONE** `f9fb19e` — matches real portal exports; mapping verified field by field |
+| F2b | Split stacked tables inside one grid (gap G3) | 4, 1 | 🟢 **DONE** `f9fb19e` — sections +9 (not +127); cleared its baseline |
+| F2c | Profile may claim a file it can demonstrably map | 4 | 🟢 **DONE** `f9fb19e` — unrecognised **747 → 712**, BANK files **78 → 122** |
+| F8 | Blank layout rows recorded under their own reason | 5 | 🟢 **DONE** `f9fb19e` — correct, but **not the win it was billed as**; see the correction below |
+| F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🔵 **IN PROGRESS** — measuring real amount distribution vs the gates |
+| F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** — now off zero (1 entity), see below |
+| F5 | Risk heat map | 18 | **OPEN** — genuinely absent from the codebase |
 | F6 | IPDR row rejects (11 of 18) | 3 | **OPEN** |
 | F7 | Location filter — verify or implement | 15 | **OPEN** |
 | — | FR-9 STRONG correlation | 9 | ⚫ **CLOSED — evidence gap, not a defect** |
+
+### Cumulative effect of the fixes above — `fir-65-2024`, W=10
+
+| Metric | Session start | After F2/F3/F4a | Change |
+|---|---|---|---|
+| Transactions | 35,870 | **36,281** | +411 |
+| Transfers | 12,616 | **12,845** | +229 |
+| Events | 238,985 | **239,396** | +411 |
+| Entities | 4,132 | **4,182** | +50 |
+| Entities with `ACCOUNT_NO` | 499 | **549** | +50 |
+| **Entities with account AND phone** | **0** | **1** | first non-zero all week |
+| Unrecognised files | 747 | **712** | −35 |
+| BANK files recognised | 78 | **122** | +44 |
+| `rejected_rows` | 140,040 | **139,534** | −506 |
+| Correlation STRONG / MEDIUM | 0 / 2 | **0 / 2** | unchanged (expected) |
+| Tests | 142 | **146** | +4 |
+
+**On the account↔phone bridge reaching 1.** One entity is not a result. It matters only
+because every prior measurement read exactly 0, so it is the first evidence the bridge
+works end to end on real evidence without a fabricated link. MEDIUM stayed at 2 — the
+bridged entity has no call and transaction inside the same window.
+
+**Two bugs of mine, caught by measuring rather than asserting.** Worth recording because
+both would have shipped as improvements:
+
+1. The stacked-table splitter first measured **−420 transactions**. Sections after the
+   first were stranded without the document's account block, and `_norm_bank` drops a row
+   with no account, so "recovery" was destroying data. Fixed by having every section
+   inherit the preamble.
+2. It also reported `SOA.pdf: split into 40 stacked tables` — one multi-page statement
+   repeating its column header per page. Fixed by merging consecutive identical headers.
 
 ### The recoverable-rows figure, corrected twice — final measured answer
 
