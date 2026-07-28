@@ -214,16 +214,40 @@ def _records_from_grid(grid: list[list], header_idx: int, base_prov: dict,
     if headers is None:
         headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]])
     records, rejects = [], []
+    blank = 0
     for r, row in enumerate(grid[header_idx + 1:], start=header_idx + 1):
         cells = [str(c).strip() for c in row]
         if not any(cells):
+            blank += 1
             continue
         if all(not c for c in cells[:2]):  # likely a footer/blank continuation
+            blank += 1
             continue
         rec = {headers[i]: (cells[i] if i < len(cells) else "") for i in range(len(headers))}
         rec["_provenance"] = {**base_prov, "row": r}
         records.append(rec)
+    if blank:
+        # Counted, not silent — but kept out of the mapping-failure reasons on purpose.
+        # An empty layout row is not lost evidence, and lumping the two together made
+        # `rejected_rows` read as a catastrophic gap when two thirds of it was padding:
+        # one 1,909-row export was 1,268 blank rows. An investigator has to be able to
+        # tell "we could not read this" from "there was nothing here".
+        rejects.append({**base_prov, "reason": REASON_BLANK_ROW,
+                        "rows": blank, "rejected": blank, "evidentiary": False})
     return records, rejects
+
+
+def _read_grid(path: str, fmt: str) -> tuple[list[list], list[str]]:
+    """Load the best grid for a grid-shaped format, plus any surrounding text lines."""
+    if fmt == "xlsx":
+        # B2: read all sheets, keep the one whose detected profile scores best
+        # (falls back to the largest sheet) — avoids losing data on non-first sheets.
+        sheets = excel.read_all_sheets(path)
+        return (_best_sheet(sheets) if sheets else [[]]), []
+    if fmt == "docx":
+        return docx_tables.read_grid(path) or [[]], []
+    text_lines, grid = pdf.read(path)
+    return grid, text_lines
 
 
 def parse_file(path: str) -> ParsedFile:
@@ -232,19 +256,9 @@ def parse_file(path: str) -> ParsedFile:
     Use `parse_file_multi` when a source can hold several independent tables.
     """
     fmt = detector.detect_format(path)
-
     if fmt != "csv":
-        if fmt == "xlsx":
-            # B2: read all sheets, keep the one whose detected profile scores best
-            # (falls back to the largest sheet) — avoids losing data on non-first sheets.
-            sheets = excel.read_all_sheets(path)
-            grid, text_lines = (_best_sheet(sheets) if sheets else [[]]), []
-        elif fmt == "docx":
-            grid, text_lines = docx_tables.read_grid(path) or [[]], []
-        else:
-            text_lines, grid = pdf.read(path)
+        grid, text_lines = _read_grid(path, fmt)
         return _parsed_from_grid(path, fmt, grid, text_lines)
-
     return _parse_csv(path, fmt)
 
 
@@ -295,7 +309,8 @@ def _parse_csv(path: str, fmt: str) -> ParsedFile:
 
 
 def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[str],
-                      table_index: int = 0) -> ParsedFile:
+                      table_index: int = 0,
+                      identity_rows: list[list] | None = None) -> ParsedFile:
     header_idx = _find_header_row(grid)
     headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]]) if grid else []
     det = detector.detect_profile(headers)
@@ -303,7 +318,10 @@ def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[st
     if table_index:
         base_prov["table"] = table_index
     records, rejects = _records_from_grid(grid, header_idx, base_prov, headers) if grid else ([], [])
-    identity = _extract_identity(grid[:header_idx], text_lines)
+    # `identity_rows` lets a split section inherit the document's header block, which sits
+    # above the first table and applies to all of them.
+    identity = _extract_identity(
+        grid[:header_idx] if identity_rows is None else identity_rows, text_lines)
     profile = det.get("profile") or {}
     return ParsedFile(
         path=path, format=fmt,
@@ -316,24 +334,119 @@ def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[st
     )
 
 
+#: Reason recorded for rows that were empty rather than unreadable. Kept distinct so
+#: `rejected_rows` can be split into "we could not map this" and "there was nothing here".
+REASON_BLANK_ROW = "blank / layout row (no content)"
+
+#: A grid split into more sections than this is far likelier to be a mis-detected
+#: header pattern than a document with that many stacked tables.
+_MAX_GRID_SECTIONS = 40
+
+#: A candidate header needs this many known-alias hits before it may split a table.
+#: Two is enough for `_find_header_row`, which only has to pick the *best* row; here a
+#: false positive severs a real table, so the bar is higher.
+_SECTION_HEADER_MIN_HITS = 3
+
+
+def _header_hits(row: list) -> int:
+    tokens = _all_header_tokens()
+    return sum(1 for c in row if str(c).strip().lower() in tokens)
+
+
+def _norm_header(row: list) -> tuple[str, ...]:
+    """Comparable form of a header row, for spotting a repeated page header."""
+    return tuple(re.sub(r"\s+", " ", str(c)).strip().lower() for c in row if str(c).strip())
+
+
+def _split_grid_sections(grid: list[list]) -> list[tuple[int, int]]:
+    """Find stacked tables in one grid. Returns [(header_idx, end_idx_exclusive), ...].
+
+    Real portal and complaint exports paste several unrelated tables into a single
+    sheet. With one header row for the whole grid, every row below the second table's
+    header is mapped against the wrong columns: on `fir-65-2024` an NCRP export put
+    1,900 of 1,909 rows into "row missing timestamp / primary identifier", because the
+    second table's serial-number column was being read as an account number.
+
+    Conservative by design — a false split severs a genuine table, which is worse than
+    leaving a section unrecovered. A row only starts a new section when it matches at
+    least `_SECTION_HEADER_MIN_HITS` known aliases, is mostly non-numeric (headers are
+    words), and has data under it.
+    """
+    if not grid:
+        return []
+    first = _find_header_row(grid)
+    sections: list[int] = [first]
+    for i in range(first + 1, len(grid) - 1):
+        row = grid[i]
+        cells = [str(c).strip() for c in row]
+        if sum(1 for c in cells if c) < 2:
+            continue
+        if _header_hits(row) < _SECTION_HEADER_MIN_HITS:
+            continue
+        # Headers are labels, not values: require most filled cells to be non-numeric.
+        filled = [c for c in cells if c]
+        numericish = sum(1 for c in filled if re.fullmatch(r"[\d.,/:\-+₹\s]+", c))
+        if numericish * 2 > len(filled):
+            continue
+        # A multi-page PDF statement repeats its column header on every page. Those are
+        # continuations of one table, not new tables: splitting them fragments a single
+        # statement into dozens of pieces and strands the account identity — which lives
+        # only in the page-1 header block — away from every later page.
+        if _norm_header(grid[i]) == _norm_header(grid[sections[-1]]):
+            continue
+        sections.append(i)
+        if len(sections) >= _MAX_GRID_SECTIONS:
+            log.debug("grid section cap reached; remaining rows stay in the last section")
+            break
+    bounds = []
+    for n, start in enumerate(sections):
+        end = sections[n + 1] if n + 1 < len(sections) else len(grid)
+        if end - start >= 2:            # a header with no data row is not a table
+            bounds.append((start, end))
+    return bounds
+
+
 def parse_file_multi(path: str) -> list[ParsedFile]:
     """Parse a file into one ParsedFile per mappable table.
 
-    Only Word differs from `parse_file`: a case .docx commonly holds dozens of small
-    tables (one per account or subject), and each needs its own profile match — a single
-    grid per document silently dropped 47% of the table rows in the real case data.
-    Every other format yields exactly one.
+    Two sources hold more than one table. A case .docx commonly holds dozens of small
+    tables (one per account or subject) — a single grid per document silently dropped
+    47% of the table rows in the real case data. Spreadsheet and PDF exports from the
+    cybercrime portal stack several unrelated tables in one grid, which mapped the
+    second table's columns onto the first table's headers.
     """
-    if detector.detect_format(path) != "docx":
-        return [parse_file(path)]
+    fmt = detector.detect_format(path)
 
-    grids = docx_tables.read_all_grids(path)
-    if not grids:
-        return [parse_file(path)]
-    return [
-        _parsed_from_grid(path, "docx", grid, [], table_index=i + 1)
-        for i, (_label, grid) in enumerate(grids)
-    ]
+    if fmt == "docx":
+        grids = docx_tables.read_all_grids(path)
+        if not grids:
+            return [parse_file(path)]
+        return [
+            _parsed_from_grid(path, "docx", grid, [], table_index=i + 1)
+            for i, (_label, grid) in enumerate(grids)
+        ]
+
+    if fmt == "csv":
+        return [_parse_csv(path, fmt)]  # pandas owns the row split; no grid to section
+
+    grid, text_lines = _read_grid(path, fmt)
+    sections = _split_grid_sections(grid)
+    if len(sections) < 2:
+        # ordinary one-table file — identical to parse_file, no behaviour change
+        return [_parsed_from_grid(path, fmt, grid, text_lines)]
+
+    # The account/holder/mobile block sits above the FIRST header and identifies the whole
+    # document. Giving it only to section 1 strands every later section without an
+    # account, and `_norm_bank` drops a row that has no account — so a split would have
+    # cost transactions rather than recovering them.
+    preamble = grid[:sections[0][0]]
+    out: list[ParsedFile] = []
+    for i, (start, end) in enumerate(sections):
+        section = grid[start:end]
+        out.append(_parsed_from_grid(path, fmt, section, text_lines,
+                                     table_index=i + 1, identity_rows=preamble))
+    log.info("%s: split into %d stacked tables", Path(path).name, len(out))
+    return out
 
 
 def _parse_one(p: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,

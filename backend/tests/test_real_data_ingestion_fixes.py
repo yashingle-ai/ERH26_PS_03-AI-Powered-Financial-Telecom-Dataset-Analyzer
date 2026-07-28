@@ -435,3 +435,93 @@ def test_registered_mobile_survives_country_code_separator():
 
     # names must be unaffected by the numeric path
     assert _extract_identity([], ["Account Name: Smita Gawali"]).get("account_holder")
+
+
+def test_stacked_tables_in_one_grid_are_split():
+    """Two tables pasted into one sheet must become two sections, not one.
+
+    Portal and complaint exports stack unrelated tables in a single grid. With one
+    header row for the whole grid, every row below the second table's header is mapped
+    against the first table's columns.
+
+    Deliberately conservative: a false split severs a real table, which is worse than
+    leaving a section unrecovered — so a candidate header needs several known-alias
+    hits and must be mostly non-numeric.
+    """
+    from backend.app.ingestion.service import _split_grid_sections
+
+    grid = [
+        ["Tran Date", "Narration", "Debit", "Credit", "Balance"],
+        ["01/04/2024", "UPI/ABC", "", "5000", "5000"],
+        ["02/04/2024", "UPI/DEF", "1000", "", "4000"],
+        ["Transaction Date", "Account No./ Wallet ID", "Transaction Amount"],
+        ["03/04/2024", "259024319039", "2,00,000.00"],
+        ["04/04/2024", "201029737717", "5,50,000.00"],
+    ]
+    sections = _split_grid_sections(grid)
+    assert len(sections) == 2, sections
+    assert sections[0] == (0, 3)
+    assert sections[1] == (3, 6)
+
+    # a single-table grid must stay single — this is the no-behaviour-change guarantee
+    assert len(_split_grid_sections(grid[:3])) == 1
+
+    # numeric rows must never be mistaken for headers, however many columns they fill
+    numeric_only = [
+        ["Tran Date", "Narration", "Debit", "Credit", "Balance"],
+        ["01/04/2024", "UPI/ABC", "1", "2", "3"],
+        ["02/04/2024", "UPI/DEF", "4", "5", "6"],
+    ]
+    assert len(_split_grid_sections(numeric_only)) == 1
+
+    assert _split_grid_sections([]) == []
+
+
+def test_profile_may_claim_a_file_it_can_demonstrably_map():
+    """A parseable statement must not be refused because required_any drifted.
+
+    `match.required_any` and `field_map.aliases` are separate lists that must agree.
+    A real statement headed "Trans Date and Time | Transaction Details | Debit |
+    Credit | Balance" maps six canonical targets cleanly, yet scored 0.0 because
+    required_any wanted the exact string "debit amount".
+    """
+    from backend.app.ingestion import detector
+
+    statement = ["Trans Date and\nTime", "Value Date", "Transaction Details",
+                 "Cheque No", "Debit", "Credit", "Balance"]
+    got = detector.detect_profile(statement)
+    assert got["source"] == "BANK", got
+    assert got["confidence"] > 0.0
+    # inferred, not asserted — the analyst must see it needs review
+    assert got["confidence"] <= 0.49
+    assert got["needs_manual_mapping"] is True
+
+    # A genuine required_any match must still outrank a fallback and keep full confidence.
+    proper = detector.detect_profile(
+        ["Tran Date", "Narration", "Debit", "Credit", "Balance", "Ac_No"])
+    assert proper["confidence"] > got["confidence"]
+
+    # Too little to be sure: a lone date column claims nothing.
+    assert detector.detect_profile(["Value Date"])["confidence"] == 0.0
+    # No time anchor -> no fallback, however many other columns match.
+    assert detector.detect_profile(["Debit", "Credit", "Balance"])["confidence"] == 0.0
+    assert detector.detect_profile([])["confidence"] == 0.0
+
+
+def test_required_all_stays_a_hard_gate():
+    """required_all means "this shape is mandatory" — no fallback may bypass it."""
+    from backend.app.ingestion import detector
+
+    profile = {
+        "profile": {"id": "t", "source": "BANK",
+                    "match": {"required_all": ["mandatory col"]}},
+        "field_map": {
+            "timestamp_start": {"aliases": ["Tran Date"]},
+            "account_no": {"aliases": ["Ac_No"]},
+            "credit": {"aliases": ["Credit"]},
+        },
+    }
+    # maps three targets incl. time + subject, but the mandatory column is absent
+    assert detector.score_profile(["Tran Date", "Ac_No", "Credit"], profile) == 0.0
+    assert detector.score_profile(
+        ["Tran Date", "Ac_No", "Credit", "Mandatory Col"], profile) > 0.0

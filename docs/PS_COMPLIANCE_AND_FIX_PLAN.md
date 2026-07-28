@@ -47,14 +47,42 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 
 | # | Fix | FRs | Status |
 |---|---|---|---|
-| F1 | Calibrate detection thresholds against real data + add an eligibility report | 11, 12, 13 | **OPEN** |
-| F2 | Classify the 722 unrecognised files | 4, 1, 6, 10 | **OPEN** |
-| F3 | Expose the forensic report over HTTP | 16, 17 | **OPEN** |
-| F4 | Account↔phone bridge — measure the two code-side routes | 6, 10, 9 | **OPEN** |
+| F3 | Expose the forensic report over HTTP | 16, 17 | 🟢 **DONE** `7d20672` — valid PDF (`%PDF`, 92,935 B) + DOCX (`PK`, 123,073 B); bad fmt → 400 |
+| F4a | Header-block mobile lost to a space | 6, 10 | 🟢 **DONE** `7d20672` — country-code-only extractions **3-of-4 → 0** on real data |
+| F2a | NCRP / Cyber Police Portal profile | 1, 4 | 🟡 **PARTIAL** — matches 5 files, mapping verified correct; yield capped by blank padding (see below) |
+| F2b | Split stacked tables inside one grid (gap G3) | 4, 1 | 🟡 **IN VERIFICATION** — fires on real PDFs; over-split + identity-stranding fixed, awaiting a full re-measure |
+| F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | **OPEN** |
+| F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** |
+| F8 | Distinguish blank padding rows from real reject reasons | 5 | **OPEN** — `rejected_rows` currently overstates the loss |
 | F5 | Risk heat map | 18 | **OPEN** |
 | F6 | IPDR row rejects (11 of 18) | 3 | **OPEN** |
 | F7 | Location filter — verify or implement | 15 | **OPEN** |
-| — | FR-9 STRONG correlation | 9 | **CLOSED — evidence gap, not a defect** |
+| — | FR-9 STRONG correlation | 9 | ⚫ **CLOSED — evidence gap, not a defect** |
+
+### The recoverable-rows figure, corrected twice — final measured answer
+
+Recorded in full because the reasoning error is instructive, not to pad the file.
+
+1. First claim: **27,713 recoverable rows** in the unrecognised files.
+2. Then, after opening one 1,909-row NCRP export and finding 1,268 blank rows in it, I
+   revised that to "two thirds is padding, the real ceiling is far lower".
+3. **Both were wrong.** Measured across all 778 unrecognised files:
+
+```
+rows in unrecognised files : 25,537
+  entirely blank           :    181   (1%)
+  carry content            : 25,356   <-- the real recoverable ceiling
+blank rows across ALL files:    185 of 378,812
+```
+
+The blank rows were peculiar to the single file I sampled. Generalising from one file was
+the mistake — the same trap as trusting a count a feature reports about itself.
+
+**Consequence for F8:** its premise was overstated. `rejected_rows` is *not* inflated by
+padding — 185 rows out of 378,812. The blank-row reason is still correct to record and
+costs nothing, but it is bookkeeping hygiene, not the honesty fix it was billed as. The
+~140k rejects are overwhelmingly genuine mapping failures, which makes F2 (profile
+coverage) the real work.
 
 ---
 

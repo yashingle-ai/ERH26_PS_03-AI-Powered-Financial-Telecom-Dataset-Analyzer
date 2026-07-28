@@ -1,0 +1,66 @@
+# NCRP / Cyber Police Portal fraud-transaction tables (FR-1, FR-4)
+#
+# The National Cybercrime Reporting Portal exports the transactions a victim reported,
+# one row per fraudulent transfer, listing the account the money went TO. Real cases
+# carry these as PDF exports and as spreadsheets pasted out of the portal.
+#
+# They were scoring 0.0 against every profile and landing in the unrecognised bucket —
+# ~2,570 rows of real, large-value transactions discarded on `fir-65-2024` alone. They
+# matter twice over: the amounts (₹2,00,000 / ₹5,00,000 / ₹5,50,000 in the files
+# inspected) are the band the structuring and layering rules actually look for, and the
+# account numbers are the population the account↔phone bridge needs.
+profile:
+  id: bank_ncrp_portal
+  source: BANK
+  event_type: TRANSACTION
+  match:
+    # Both labels are portal-specific: no bank statement uses "Wallet ID" alongside
+    # "Transaction ID / UTR", so this cannot steal files from bank_generic.
+    required_any: ["account no./ wallet id", "transaction id / utr number",
+                   "transaction id / utr n"]
+    required_all: []
+field_map:
+  timestamp_start:
+    # dd/mm/yyyy — parse_dt applies dayfirst for non-ISO shapes
+    aliases: ["Transaction Date", "Date of Transaction", "Txn Date"]
+    type: datetime
+  account_no:
+    aliases: ["Account No./ Wallet ID", "Account No/ Wallet ID", "Account No./Wallet ID",
+              "Wallet ID", "Account Number"]
+    type: string
+  credit:
+    # Direction is asserted deliberately, not guessed. An NCRP row records money
+    # arriving in the account being reported — that account is the destination of the
+    # fraudulent transfer, which is the whole point of the complaint. Leaving direction
+    # unset is worse than it looks: the money-flow series treats anything not marked
+    # CREDIT as outflow, which would silently invert every one of these rows.
+    aliases: ["Transaction Amount", "Amount", "Disputed Amount", "Fraud Amount"]
+    type: decimal
+  attributes.ref_no:
+    aliases: ["Transaction ID / UTR Number", "Transaction ID / UTR N", "UTR Number",
+              "Transaction ID", "UTR"]
+    type: string
+  attributes.narration:
+    # The portal's fraud taxonomy ("UPI Related Frauds", "Fraud Call/Vishing") is the
+    # only descriptive text on the row, and it is what an investigator reads first.
+    aliases: ["Sub Category", "Category", "Fraud Category", "Remarks"]
+    type: string
+  attributes.bank_name:
+    aliases: ["Bank/ (Wallet /PG/PA)/ Merchant / Insurance",
+              "Bank/ (Wallet /PG/PA)/ Merchant", "Bank Name", "Bank"]
+    type: string
+# Complaint exports carry the reporter's own details above the table.
+header_identity:
+  account_no:
+    aliases: ["Account Number", "Account No", "A/C No", "Ac_No"]
+  account_holder:
+    aliases: ["Account Name", "Customer Name", "Name", "Complainant Name"]
+  registered_mobile:
+    aliases: ["Registered Mobile", "Mobile Number", "Mobile", "Customer Mobile",
+              "Contact Number"]
+# Narration mining: the fraud category rarely carries identifiers, but UPI VPAs and
+# UTRs do appear in the free-text variants of this export.
+narration_extract:
+  upi_id: '([a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,})'
+  utr: '\b(\d{12,22})\b'
+  mode: '\b(UPI|NEFT|IMPS|RTGS|ATM|POS|CASH)\b'

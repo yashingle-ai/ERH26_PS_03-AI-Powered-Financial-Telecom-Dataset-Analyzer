@@ -55,8 +55,17 @@ class Investigation:
             "transactions": ev_types.get("TRANSACTION", 0),
             "calls": ev_types.get("CALL", 0),
             "ip_sessions": ev_types.get("IP_SESSION", 0),
+            # `rejected_rows` keeps its original meaning — every dropped row — so any
+            # figure previously quoted still compares. The split below is what an analyst
+            # actually needs: two thirds of the total on the real case was blank
+            # spreadsheet padding, which is not lost evidence, and lumping it in made the
+            # headline read as a catastrophic gap.
             "rejected_rows": sum(r.get("rejected", r.get("rows", 0)) for r in self.rejects),
             "reject_entries": len(self.rejects),
+            "blank_rows": sum(r.get("rejected", r.get("rows", 0)) for r in self.rejects
+                              if r.get("evidentiary") is False),
+            "unmapped_rows": sum(r.get("rejected", r.get("rows", 0)) for r in self.rejects
+                                 if r.get("evidentiary") is not False),
             "entities": len(core),
             # Headline FR-9 count — STRONG only. Do not inflate with MEDIUM.
             "correlation_hits": len(self.correlation_hits),

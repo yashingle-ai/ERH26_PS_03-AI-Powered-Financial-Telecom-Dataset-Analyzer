@@ -84,6 +84,55 @@ def _profile_aliases(profile: dict) -> set[str]:
     return aliases
 
 
+#: Canonical targets that make a table unambiguously a transaction/event record.
+#: A mappability fallback needs a time anchor plus something to hang it on.
+_ANCHOR_TIME = ("timestamp_start", "datetime_col", "date_col")
+_ANCHOR_SUBJECT = ("account_no", "amount", "debit", "credit", "phone", "msisdn",
+                   "caller", "called", "ip", "imei", "imsi")
+
+#: Distinct canonical targets a profile must map before it may claim a file whose
+#: headers miss every `required_any` token.
+_FALLBACK_MIN_TARGETS = 3
+
+#: Ceiling for a fallback match. Kept under `auto_detect_threshold()` so such a file is
+#: always flagged `needs_manual_mapping`, and so any profile that matched properly wins.
+_FALLBACK_MAX_CONFIDENCE = 0.49
+
+
+def _mapped_targets(headers_set: set[str], profile: dict) -> list[str]:
+    out = []
+    for target, spec in profile.get("field_map", {}).items():
+        aliases = {a.strip().lower() for a in spec.get("aliases", [])}
+        if aliases & headers_set:
+            out.append(target)
+    return out
+
+
+def _fallback_score(hset: set[str], profile: dict) -> float:
+    """Score a profile that failed `required_any` but can still map the file.
+
+    `match.required_any` and `field_map.aliases` are two independent lists that must
+    agree, and they drift: a real statement headed
+    `Trans Date and Time | Transaction Details | Debit | Credit | Balance` maps six
+    canonical targets cleanly, yet scored 0.0 because `required_any` wanted the exact
+    string "debit amount". The file was fully parseable and the profile refused it.
+
+    Rather than keep patching tokens — the same drift returns with the next bank — a
+    profile may claim a file it can demonstrably map. The bar is deliberately high (a
+    time anchor, a subject, and several targets) and the confidence deliberately low, so
+    this only ever *adds* recognition and never outranks a genuine match.
+    """
+    targets = _mapped_targets(hset, profile)
+    if len(targets) < _FALLBACK_MIN_TARGETS:
+        return 0.0
+    if not any(t in targets for t in _ANCHOR_TIME):
+        return 0.0
+    if not any(t in targets for t in _ANCHOR_SUBJECT):
+        return 0.0
+    fields = profile.get("field_map", {})
+    return min(len(targets) / len(fields), _FALLBACK_MAX_CONFIDENCE)
+
+
 def score_profile(headers: list[str], profile: dict) -> float:
     """Fraction of profile *fields* matched by the file headers (0..1).
 
@@ -100,14 +149,15 @@ def score_profile(headers: list[str], profile: dict) -> float:
     # events. The top-level lookup is kept as a fallback for flat profile dicts.
     match = profile.get("profile", {}).get("match") or profile.get("match", {})
 
-    req_any = [a.strip().lower() for a in match.get("required_any", [])]
-    if req_any and not any(a in hset for a in req_any):
-        return 0.0
-
-    # required_all was declared in the schema but never enforced.
+    # required_all was declared in the schema but never enforced. It stays a hard gate:
+    # unlike required_any it expresses "this shape is mandatory", so no fallback applies.
     req_all = [a.strip().lower() for a in match.get("required_all", [])]
     if req_all and not all(a in hset for a in req_all):
         return 0.0
+
+    req_any = [a.strip().lower() for a in match.get("required_any", [])]
+    if req_any and not any(a in hset for a in req_any):
+        return _fallback_score(hset, profile)
 
     fields = profile.get("field_map", {})
     if not fields:
