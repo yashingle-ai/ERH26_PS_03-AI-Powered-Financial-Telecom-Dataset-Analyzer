@@ -65,6 +65,38 @@ def mule_account(feats, cfg):
     return flags
 
 
+#: Percentile of the case's own INR transfer amounts used to cap the noise floor.
+#: Deliberately the median: a filter meant to drop "tiny" transfers must not exclude
+#: the typical transfer, whatever scale the case happens to run at.
+_NOISE_FLOOR_PERCENTILE = 0.50
+
+
+def adaptive_amount_floor(transfers, min_amount_inr) -> float:
+    """Lower a configured noise floor to fit the case's own scale — never raise it.
+
+    `min_amount_inr` exists to drop benign small hops. It was fixed at ₹10,000, which
+    was below the median on the synthetic fixture (₹26,015) but sat at the **p90** of the
+    real case (median ₹997): it excluded roughly nine transfers in ten from layering and
+    circular-flow detection, so those rules were searching a tenth of the graph.
+
+    Taking the minimum of the configured value and the case median means a case at the
+    scale the config assumed is unaffected, while a smaller-scale case is not silently
+    filtered away. It can only make detection more sensitive, never less — the safe
+    direction for a forensic tool, since the cost of a missed lead outweighs a reviewed
+    false one.
+    """
+    if not min_amount_inr:
+        return 0.0
+    amounts = sorted(
+        float(t["amount"]) for t in transfers
+        if t.get("amount") is not None and (t.get("asset") or "INR") == "INR"
+    )
+    if not amounts:
+        return float(min_amount_inr)
+    median = amounts[int(len(amounts) * _NOISE_FLOOR_PERCENTILE)]
+    return float(min(float(min_amount_inr), median))
+
+
 def _passes_amount_gate(tr, min_amount_inr) -> bool:
     """D1: drop tiny INR transfers (benign noise) from structural detection; always keep
     non-INR (crypto) edges since their unit amounts aren't comparable to an INR floor."""
@@ -89,7 +121,7 @@ def circular_flow(transfers, cfg):
     r = _enabled(cfg, "circular_flow")
     if not r:
         return []
-    g = _transfer_digraph(transfers, r.get("min_amount_inr", 0))
+    g = _transfer_digraph(transfers, adaptive_amount_floor(transfers, r.get("min_amount_inr", 0)))
     limits = config.graph_limits()
     # review fix C4: bound worst-case-exponential cycle enumeration by count AND time.
     try:
@@ -124,7 +156,7 @@ def layering(transfers, cfg):
     r = _enabled(cfg, "layering")
     if not r:
         return []
-    g = _transfer_digraph(transfers, r.get("min_amount_inr", 0))
+    g = _transfer_digraph(transfers, adaptive_amount_floor(transfers, r.get("min_amount_inr", 0)))
     span = timedelta(hours=r["max_span_hours"])
     min_hops = r["min_hops"]
     flagged = set()
@@ -189,14 +221,64 @@ def dormant_activation(feats, cfg):
             for eid, f in feats.items() if f.get("max_dormancy_days", 0) >= thr]
 
 
+_RULE_FNS = (
+    ("structuring", structuring, "feats"),
+    ("rapid_in_out", rapid_in_out, "feats"),
+    ("mule_account", mule_account, "feats"),
+    ("circular_flow", circular_flow, "transfers"),
+    ("layering", layering, "transfers"),
+    ("call_transfer_coincidence", call_transfer_coincidence, "feats"),
+    ("comm_burst", comm_burst, "feats"),
+    ("dormant_activation", dormant_activation, "feats"),
+)
+
+
+def eligibility_report(feats, transfers, cfg) -> list[dict]:
+    """Per rule: was it enabled, could it apply here, and did it fire.
+
+    "0 high-risk entities" is read by an investigator as *nothing suspicious in this
+    case*. On the real case it actually meant something different for each rule:
+    `structuring` had no candidate transaction anywhere near the ₹10 lakh reporting
+    threshold (case p99 is ₹100,000), so it could not fire — a legitimate finding, not a
+    miss. `layering` was searching a tenth of the transfer graph because its noise floor
+    sat at the case's p90.
+
+    A rule that never ran and a rule that ran and found nothing must not look identical.
+    This is the audit trail that separates them.
+    """
+    out = []
+    inr = sorted(float(t["amount"]) for t in transfers
+                 if t.get("amount") is not None and (t.get("asset") or "INR") == "INR")
+    for name, fn, arg in _RULE_FNS:
+        r = cfg.get("rules", {}).get(name, {})
+        if not r.get("enabled", False):
+            out.append({"rule": name, "enabled": False, "eligible": None,
+                        "fired": 0, "note": "disabled in config"})
+            continue
+        fired = len({f["entity_id"] for f in fn(feats if arg == "feats" else transfers, cfg)})
+        row = {"rule": name, "enabled": True, "fired": fired, "note": None}
+        if name == "structuring" and inr:
+            thr = r["reporting_threshold_inr"]
+            lo = thr * (1 - r["just_below_band_pct"])
+            row["eligible"] = sum(1 for a in inr if lo <= a < thr)
+            if row["eligible"] == 0:
+                row["note"] = (f"no transaction in [{lo:,.0f}, {thr:,.0f}); case max is "
+                               f"{inr[-1]:,.0f} — the typology does not occur here")
+        elif name in ("layering", "circular_flow") and inr:
+            floor = adaptive_amount_floor(transfers, r.get("min_amount_inr", 0))
+            row["eligible"] = sum(1 for a in inr if a >= floor)
+            configured = float(r.get("min_amount_inr", 0) or 0)
+            if floor < configured:
+                row["note"] = (f"noise floor lowered {configured:,.0f} -> {floor:,.0f} "
+                               f"to match this case's scale")
+        else:
+            row["eligible"] = len(feats)
+        out.append(row)
+    return out
+
+
 def run_all(feats, transfers, cfg):
     flags = []
-    flags += structuring(feats, cfg)
-    flags += rapid_in_out(feats, cfg)
-    flags += mule_account(feats, cfg)
-    flags += circular_flow(transfers, cfg)
-    flags += layering(transfers, cfg)
-    flags += call_transfer_coincidence(feats, cfg)
-    flags += comm_burst(feats, cfg)
-    flags += dormant_activation(feats, cfg)
+    for _name, fn, arg in _RULE_FNS:
+        flags += fn(feats if arg == "feats" else transfers, cfg)
     return flags

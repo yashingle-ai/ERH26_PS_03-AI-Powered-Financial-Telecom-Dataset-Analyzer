@@ -31,13 +31,15 @@ so.
 | 12 | Risk scores | 🟡 same cause as FR-11 | demo 3 high / 11 med / 75 low; real **0 high** |
 | 13 | Mule-account signatures | 🟡 same cause as FR-11 | fires on `demo` only |
 | 14 | Money-flow + comms graphs, drill-down | 🟢 works | 8,435 nodes on real data, HTTP 200 |
-| 15 | Filter / search (entity, amount, time, location) | 🟡 partial | entity/amount/time yes; **location unverified** |
+| 15 | Filter / search (entity, amount, time, location) | 🟡 partial | all four supported by the DSL (`Field_.LOCATION`, `CELL_ID`; CDR profiles map both) via `/v1/query`. `/v1/events` still filters only by `event_type` |
 | 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
 | 17 | STR generation (bonus) | 🟡 reachable, content unreviewed | ships inside the report; the STR section itself has not been read against a real case |
-| 18 | Risk heat maps (bonus) | 🔴 not implemented | zero matches anywhere in the codebase |
+| 18 | Risk heat maps (bonus) | 🟡 Streamlit only | `dashboard/app.py:331` renders entities × typologies as a plotly Heatmap; **no API endpoint, absent from React** |
 | 19 | Natural-language query (bonus) | 🟢 works | Gemini 6/6 planned; offline fallback; plain-text answers |
 
-**9 green · 7 amber · 3 red** (was 8 / 7 / 4 at the start of the fix work).
+**9 green · 8 amber · 2 red** (was 8 / 7 / 4 at the start of the fix work).
+
+Remaining red: FR-3 (IPDR barely parses) and FR-9 (STRONG correlation, evidence-blocked).
 
 ---
 
@@ -55,9 +57,9 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 | F8 | Blank layout rows recorded under their own reason | 5 | 🟢 **DONE** `f9fb19e` — correct, but **not the win it was billed as**; see the correction below |
 | F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🔵 **IN PROGRESS** — measuring real amount distribution vs the gates |
 | F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** — now off zero (1 entity), see below |
-| F5 | Risk heat map | 18 | **OPEN** — genuinely absent from the codebase |
+| F5 | Risk heat map in the API + React | 18 | **OPEN** — exists in Streamlit; unreachable from the primary UI, same shape as F3 was |
 | F6 | IPDR row rejects (11 of 18) | 3 | **OPEN** |
-| F7 | Location filter — verify or implement | 15 | **OPEN** |
+| F7 | Location filter on `/v1/events` | 15 | **OPEN** — the DSL path already covers location; only the direct listing endpoint lacks it |
 | — | FR-9 STRONG correlation | 9 | ⚫ **CLOSED — evidence gap, not a defect** |
 
 ### Cumulative effect of the fixes above — `fir-65-2024`, W=10
