@@ -37,6 +37,11 @@ class ParsedFile:
     container: str | None = None
     #: Table index within a multi-table source (Word documents hold many).
     table_index: int = 0
+    #: {header: {"target", "confidence", "type", "purity", "header_score"}} — columns
+    #: mapped from their VALUES because no profile alias claimed them. Carried through to
+    #: normalization, and surfaced so an analyst can audit every inferred mapping rather
+    #: than discover that a column was interpreted on a guess.
+    value_map: dict = field(default_factory=dict)
 
     @property
     def summary(self) -> dict:
@@ -53,6 +58,7 @@ class ParsedFile:
             "headers": self.headers,
             "records": len(self.records),
             "rejects": len(self.rejects),
+            "value_inferred": {h: s["target"] for h, s in self.value_map.items()},
         }
 
 
@@ -209,6 +215,16 @@ def _dedupe_headers(headers: list[str]) -> list[str]:
     return out
 
 
+def columns_from_records(records: list[dict], headers: list[str]) -> dict[str, list]:
+    """{header: [values...]} for value-based column typing.
+
+    Capped: the typer samples a couple of hundred values per column, so materialising a
+    million-row column to hand it 200 is waste on a 335 MB case folder.
+    """
+    limit = min(len(records), 400)
+    return {h: [records[i].get(h) for i in range(limit)] for h in headers}
+
+
 def _records_from_grid(grid: list[list], header_idx: int, base_prov: dict,
                        headers: list[str] | None = None) -> tuple[list[dict], list[dict]]:
     if headers is None:
@@ -296,7 +312,7 @@ def _parse_csv(path: str, fmt: str) -> ParsedFile:
             if col in records[0] and records[0][col]:
                 identity[key] = records[0][col]
 
-    det = detector.detect_profile(headers)
+    det = detector.detect_profile(headers, columns_from_records(records, headers))
     profile = det.get("profile") or {}
     return ParsedFile(
         path=path, format=fmt,
@@ -305,6 +321,7 @@ def _parse_csv(path: str, fmt: str) -> ParsedFile:
         confidence=det.get("confidence", 0.0),
         needs_manual_mapping=det.get("needs_manual_mapping", True),
         headers=headers, records=records, header_identity=identity, rejects=[],
+        value_map=det.get("value_map") or {},
     )
 
 
@@ -313,11 +330,13 @@ def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[st
                       identity_rows: list[list] | None = None) -> ParsedFile:
     header_idx = _find_header_row(grid)
     headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]]) if grid else []
-    det = detector.detect_profile(headers)
     base_prov = {"source_file": Path(path).name, "format": fmt}
     if table_index:
         base_prov["table"] = table_index
     records, rejects = _records_from_grid(grid, header_idx, base_prov, headers) if grid else ([], [])
+    # Records are built before detection so the detector can read the column VALUES, not
+    # only the header strings. Values are what let an unfamiliar export be classified.
+    det = detector.detect_profile(headers, columns_from_records(records, headers))
     # `identity_rows` lets a split section inherit the document's header block, which sits
     # above the first table and applies to all of them.
     identity = _extract_identity(
@@ -330,7 +349,7 @@ def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[st
         confidence=det.get("confidence", 0.0),
         needs_manual_mapping=det.get("needs_manual_mapping", True),
         headers=headers, records=records, header_identity=identity, rejects=rejects,
-        table_index=table_index,
+        table_index=table_index, value_map=det.get("value_map") or {},
     )
 
 

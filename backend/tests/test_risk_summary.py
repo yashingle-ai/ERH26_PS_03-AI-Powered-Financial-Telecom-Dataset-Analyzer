@@ -42,3 +42,28 @@ def test_empty_risk_does_not_crash_the_summary():
     s = _inv({}).summary()
     assert s["risk_bands"] == {"high": 0, "medium": 0, "low": 0}
     assert s["top_risk_score"] == 0.0
+
+
+def test_deduped_events_are_not_counted_as_unreadable():
+    """A de-duplicated event parsed fine — it is not a row we failed to read.
+
+    `rejected_rows` mixed three things: rows that could not be mapped, blank layout
+    rows, and events dropped as duplicates after a successful parse. On the real case
+    the duplicates were roughly a third of the total, which made the headline look like
+    a far larger evidence gap than it was.
+    """
+    inv = _inv({})
+    inv.rejects = [
+        {"file": "a.csv", "reason": "row missing timestamp / primary identifier",
+         "rows": 100, "rejected": 40},
+        {"file": "(cross-file)", "reason": "duplicate events removed",
+         "rows": 52633, "rejected": 52633, "evidentiary": False},
+        {"file": "b.xlsx", "reason": "blank / layout row (no content)",
+         "rows": 7, "rejected": 7, "evidentiary": False},
+    ]
+    s = inv.summary()
+    # the total keeps its original meaning so older figures still compare
+    assert s["rejected_rows"] == 40 + 52633 + 7
+    # but the number that means "evidence we could not read" excludes both
+    assert s["unmapped_rows"] == 40
+    assert s["non_evidentiary_rows"] == 52633 + 7

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core import config
+from . import value_typer
 
 FORMAT_BY_EXT = {
     ".xlsx": "xlsx", ".xls": "xlsx", ".csv": "csv", ".txt": "csv", ".pdf": "pdf",
@@ -170,8 +171,23 @@ def score_profile(headers: list[str], profile: dict) -> float:
     return matched / len(fields)
 
 
-def detect_profile(headers: list[str]) -> dict:
-    """Return best-matching profile with confidence + source type across all groups."""
+def detect_profile(headers: list[str], columns: dict[str, list] | None = None) -> dict:
+    """Return best-matching profile with confidence + source type across all groups.
+
+    `columns` is {header: [values...]} for the same table. When supplied, the file's own
+    values are used as a second, independent line of evidence — see `value_typer` for the
+    reasoning. It is used two ways, both strictly additive:
+
+      1. as a **last-resort claim** when no profile matched on headers at all. This is the
+         file-level drop: an unmatched file gets `source_type=None` and normalization
+         rejects it whole, so a bank with unfamiliar column spellings loses every row.
+      2. as a **gap filler** on whichever profile wins, for canonical targets its own
+         aliases did not resolve. This is the row-level drop: `_norm_bank` returns None
+         when it has no timestamp or no account, and both are highly recognizable from
+         values regardless of what the column is called.
+
+    Header matching always wins where it succeeds; nothing here can overwrite it.
+    """
     best = {"profile": None, "confidence": 0.0, "source": None}
     for group, plist in config.profiles().items():
         for profile in plist:
@@ -182,5 +198,29 @@ def detect_profile(headers: list[str]) -> dict:
                     "confidence": round(conf, 3),
                     "source": profile.get("profile", {}).get("source"),
                 }
+
+    value_map: dict = {}
+    if columns and value_typer.enabled():
+        if best["profile"] is None or best["confidence"] == 0.0:
+            # (1) nothing claimed this file on names. Ask the values instead.
+            for _group, plist in config.profiles().items():
+                for profile in plist:
+                    vconf, inferred = value_typer.value_profile_score(
+                        headers, columns, profile)
+                    if vconf > best["confidence"]:
+                        best = {
+                            "profile": profile,
+                            "confidence": vconf,
+                            "source": profile.get("profile", {}).get("source"),
+                        }
+                        value_map = inferred
+        if best["profile"] is not None and not value_map:
+            # (2) fill only what the winning profile's aliases left unmapped.
+            hset = {h.strip().lower() for h in headers if h}
+            value_map = value_typer.infer_targets(
+                headers, columns, best["profile"],
+                already_mapped=set(_mapped_targets(hset, best["profile"])))
+
+    best["value_map"] = value_map
     best["needs_manual_mapping"] = best["confidence"] < config.auto_detect_threshold()
     return best

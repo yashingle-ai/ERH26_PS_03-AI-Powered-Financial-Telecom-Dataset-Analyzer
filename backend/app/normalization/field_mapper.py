@@ -15,7 +15,7 @@ def _norm_header(value: str) -> str:
     return re.sub(r"\s+", " ", str(value).strip().lower())
 
 
-def map_record(raw: dict, profile: dict) -> dict:
+def map_record(raw: dict, profile: dict, value_map: dict | None = None) -> dict:
     """Return {canonical_target: value} for one raw record using the profile aliases.
 
     Several columns often claim the same target — an ICORE statement carries
@@ -31,6 +31,12 @@ def map_record(raw: dict, profile: dict) -> dict:
     One header may also feed multiple targets (e.g. Target/A → entity_phone and
     target_phone). Aliases that appear under several field_map entries are applied
     to every matching target.
+
+    `value_map` is {header: {"target": ...}} inferred from the column's *values* by
+    `ingestion.value_typer`, for targets no alias resolved. It is applied last and only
+    where the alias pass left the target empty, so a declared alias always wins and this
+    can only add fields. Without it, one unknown column spelling means no
+    `timestamp_start` or no `account_no`, and the normalizer drops every row in the file.
     """
     # alias -> list of (target, rank) so shared headers can fill several fields
     idx: dict[str, list[tuple[str, int]]] = {}
@@ -56,6 +62,19 @@ def map_record(raw: dict, profile: dict) -> dict:
             if target not in chosen or candidate < chosen[target]:
                 chosen[target] = candidate
                 out[target] = value
+
+    for header, spec in (value_map or {}).items():
+        target = spec.get("target") if isinstance(spec, dict) else spec
+        if not target:
+            continue
+        if out.get(target) not in (None, ""):
+            continue                     # an alias already produced a value — it wins
+        value = raw.get(header)
+        if isinstance(value, str):
+            value = value.strip().strip("'\"")
+        if value is None or value == "":
+            continue
+        out[target] = value
     return out
 
 

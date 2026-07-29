@@ -380,7 +380,7 @@ def normalize_parsed_files(parsed_files: list) -> tuple[list[dict], list[dict]]:
         file_rejects = 0
         for raw in pf.records:
             prov = {**raw.get("_provenance", {}), "profile": pf.profile_id}
-            mapped = field_mapper.map_record(raw, profile)
+            mapped = field_mapper.map_record(raw, profile, getattr(pf, "value_map", None))
             ev = (fn(mapped, pf.header_identity, profile, prov, source_tz)
                   if pf.source_type == "BANK" else fn(mapped, prov, source_tz))
             if ev is None:
@@ -401,6 +401,11 @@ def normalize_parsed_files(parsed_files: list) -> tuple[list[dict], list[dict]]:
 
     events, dup = _dedupe(events)
     if dup:
+        # Not lost evidence: these rows parsed successfully and were then recognised as
+        # the same event arriving twice (a CDR shipped as both .csv and "- Reports.xlsx").
+        # Counting them beside rows that could not be read overstates the gap — on the
+        # real case they were roughly a third of `rejected_rows`. `rows` is set so the
+        # entry cannot be bucketed as an infinite rejection rate.
         rejects.append({"file": "(cross-file)", "reason": "duplicate events removed",
-                        "rejected": dup})
+                        "rows": dup, "rejected": dup, "evidentiary": False})
     return events, rejects
