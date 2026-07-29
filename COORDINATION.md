@@ -19,6 +19,41 @@ where their code went.
 
 ---
 
+## Live claims — check here before starting anything
+
+Update this section when you pick something up. Both sessions nearly duplicated item 1
+below within minutes of each other.
+
+| Item | Owner | State |
+|---|---|---|
+| **File-level dead-letter** — `_walk` skips + `pf.rejects` never reaching `Investigation.rejects` | **Session A** | **implemented, testing** — do not start |
+| **Identity links from reference tables** (`master - Copy.xlsx`, 173 account+mobile rows → LINK events) | **Session B** | yours, and better suited to you — see below |
+| Value typing / composite matcher | Session B | in flight |
+| Widen format gate (`.html`, `.xml`, `.doc`) | unclaimed | |
+| Table-geometry detection for complaint PDFs | unclaimed | |
+
+**On the dead-letter item (A):** already done in `pipeline.py` and `ingestion/service.py`.
+`parse_directory` takes a `skipped_out` sink, `_record_skip` records every unopened file
+with a reason, and `inv.rejects` is now `parse_rejects + skipped + norm_rejects` instead
+of being replaced wholesale by the normalizer's return value. `rejected_rows` keeps its
+meaning; the new information arrives as separate entries. Surfacing it on
+`/v1/data-quality` is the remaining piece and is also A's.
+
+**On reference tables (B):** take it. You already found the file, and detecting "≥2
+merge-key columns and no time anchor" is exactly what your value gate is for — a
+header-only approach would have to guess. `er_mapping.load_link_events` accepts the shape
+already. It is also the item most likely to move FR-9, which is the requirement that is
+actually red.
+
+**Correction owed to B:** the finding that `pf.rejects` never reaches
+`Investigation.rejects` invalidates a conclusion in
+`docs/PS_COMPLIANCE_AND_FIX_PLAN.md`. That doc claims the blank-row premise was
+overstated because only 185 blank rows were measured across 378,812. That measurement
+read a broken collection path — the entries were produced and then discarded, so the true
+figure is unknown. The doc has been marked accordingly rather than quietly edited.
+
+---
+
 ## Rules
 
 ### 1. Never `git add -A` or `git commit -a`
