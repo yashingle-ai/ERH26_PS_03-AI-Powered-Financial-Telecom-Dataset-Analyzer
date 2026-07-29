@@ -72,6 +72,17 @@ class Investigation:
             "correlation_hits_medium": len(self.correlation_hits_medium),
             "transfers": len(self.transfers),
             "high_risk_entities": len(high),
+            # "0 high-risk entities" reads as "nothing to look at here". On the real case
+            # it meant something narrower: no entity exhibits enough distinct typologies
+            # to clear the band, while 25 sat at medium and were worth an analyst's time.
+            # The band is deliberately hard to reach — score = 0.7*Σweights + 0.3*ml, so
+            # high needs nearly every typology at once — and rescaling it per case would
+            # manufacture high-risk labels rather than find them. Reporting the
+            # distribution and the top score instead lets the headline explain itself.
+            "risk_bands": {b: sum(1 for r in self.risk.values() if r["band"] == b)
+                           for b in ("high", "medium", "low")},
+            "top_risk_score": max((r["risk_score"] for r in self.risk.values()),
+                                  default=0.0),
         }
 
     def reject_report(self) -> list[dict]:
