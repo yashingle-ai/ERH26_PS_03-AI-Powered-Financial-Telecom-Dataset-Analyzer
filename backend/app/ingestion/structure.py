@@ -288,14 +288,38 @@ def _promote_embedded_fields(headers: list[str], rows: list[list[str]]
 
 
 def regions(grid: list[list]) -> list[tuple[list[str], list[list[str]]]]:
-    """Recover (headers, rows) for each real table inside a broken grid.
+    """Recover (headers, rows) for each real table inside a broken grid."""
+    return [(headers, rows) for headers, rows, _start in regions_located(grid)]
+
+
+def document_preamble(grid: list[list],
+                      located: list[tuple[list[str], list[list[str]], int]] | None = None
+                      ) -> list[list]:
+    """Rows above the first recovered table — the block carrying account and holder.
+
+    A recovered region reaches `_parsed_from_grid` as `[headers] + rows`, which throws the
+    preamble away. On one real Bank of Maharashtra statement that cost every one of 8,534
+    rows: `Account No | 60532637196` sits sixteen rows above the column header, `_norm_bank`
+    drops a row with no account, and the file went 6,869 transactions -> 0 while its headers
+    and records were otherwise recovered perfectly.
+
+    It must be the first region's start, not the first *span's* start. The preamble of that
+    statement is itself split into two spans by width — `(0,6)` and `(6,16)` — before the
+    table's span at `(16, 8555)`. Keying on the first span returned `grid[:0]`.
+    """
+    located = regions_located(grid) if located is None else located
+    return grid[:located[0][2]] if located else []
+
+
+def regions_located(grid: list[list]) -> list[tuple[list[str], list[list[str]], int]]:
+    """`regions()` plus each region's starting row index in the original grid.
 
     Returns `[]` when recovery cannot account for the grid — the caller then leaves the
     existing path in place. That check is the reason this function can no longer lose data
     wholesale: it does not depend on correctly predicting which step misbehaved.
     """
     spans = _runs(grid)
-    out: list[tuple[list[str], list[list[str]]]] = []
+    out: list[tuple[list[str], list[list[str]], int]] = []
     accounted = 0
     inherited: list[str] | None = None
 
@@ -325,7 +349,8 @@ def regions(grid: list[list]) -> list[tuple[list[str], list[list[str]]]]:
 
         rows = _coalesce(span[idx:], len(headers))
         if rows:
-            out.append(_promote_embedded_fields(headers, rows))
+            promoted_headers, promoted_rows = _promote_embedded_fields(headers, rows)
+            out.append((promoted_headers, promoted_rows, start))
             accounted += end - start
 
     non_empty = sum(1 for row in grid if effective_width(row))

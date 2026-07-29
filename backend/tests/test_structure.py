@@ -121,7 +121,45 @@ def test_layer_is_not_promoted_to_a_column():
 
 def test_recovery_of_an_empty_grid_is_empty():
     assert structure.regions([]) == []
+    assert structure.regions_located([]) == []
+    assert structure.document_preamble([]) == []
     assert not structure.needs_recovery([])
+
+
+def test_document_preamble_is_above_the_first_REGION_not_the_first_span():
+    """The account block sits above the table and identifies the whole document. Losing it
+    cost every one of 8,534 rows on a real Bank of Maharashtra statement — `_norm_bank`
+    drops a row with no account, so the file went 6,869 transactions to zero.
+
+    Keying on the first *span* is not sufficient: that statement's preamble is itself split
+    into two spans by width before the table's span, so `grid[:spans[0][0]]` was `grid[:0]`.
+    """
+    preamble = [
+        ["Account Details", "", "", "", ""],
+        ["Account No", "60532637196", "", "Open Date", "26/04/2025"],
+        ["Account Holder", "Miss. Sonal Sastiya", "", "", ""],
+        # a width change inside the preamble, as in the real file
+        ["Phone No", "", "Email", "bom@example"],
+        ["Address", "8-9 RAM KRISHNA", "", ""],
+    ]
+    table = [
+        ["Sr No", "Date", "Particulars", "Debit", "Credit"],
+        ["1", "21/05/2025", "UPI 514185679876", "", "13,000.00"],
+        ["2", "21/05/2025", "UPI 514179540681", "", "6,993.00"],
+        ["3", "22/05/2025", "ATM WDL SURAT", "2,000.00", ""],
+        ["4", "23/05/2025", "NEFT VENDOR", "1,500.00", ""],
+    ]
+    grid = preamble + table
+
+    located = structure.regions_located(grid)
+    assert located, "no region recovered"
+    first_start = located[0][2]
+    assert first_start == len(preamble), (
+        f"first region starts at {first_start}, expected {len(preamble)}")
+
+    recovered_preamble = structure.document_preamble(grid, located)
+    assert len(recovered_preamble) == len(preamble)
+    assert any("60532637196" in str(c) for row in recovered_preamble for c in row)
 
 
 # ---- end to end --------------------------------------------------------------------

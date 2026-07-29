@@ -468,14 +468,19 @@ def parse_file_multi(path: str) -> list[ParsedFile]:
     # cybercrime-portal exports produced a 495-row grid yielding 0 usable records — the
     # transaction dates sat on continuation rows that were being discarded as padding.
     if len(sections) < 2 and structure.enabled() and structure.needs_recovery(grid):
-        recovered = structure.regions(grid)
+        recovered = structure.regions_located(grid)
         if recovered:
             log.info("%s: recovered %d table region(s) from broken geometry",
                      Path(path).name, len(recovered))
+            # The account/holder block sits above the first recovered table and identifies
+            # the whole document. `[headers] + rows` drops it, and `_norm_bank` drops a row
+            # with no account — the same hazard the stacked-table splitter already handles
+            # by passing its preamble down.
+            preamble = structure.document_preamble(grid, recovered)
             return [
                 _parsed_from_grid(path, fmt, [headers] + rows, text_lines,
-                                  table_index=i + 1)
-                for i, (headers, rows) in enumerate(recovered)
+                                  table_index=i + 1, identity_rows=preamble)
+                for i, (headers, rows, _start) in enumerate(recovered)
             ]
 
     if len(sections) < 2:
