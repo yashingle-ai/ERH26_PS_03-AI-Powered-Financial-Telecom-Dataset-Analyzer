@@ -1,0 +1,56 @@
+# Google legal-process subscriber response (SubscriberInfo.html) -> Event(IP_SESSION).
+#
+# These files were never opened: `.html` was absent from detector.FORMAT_BY_EXT, so
+# `_walk` skipped them without even a reject entry (8 in FIR 65-2024, 15 in
+# FIR-0006-2025 U). Each carries an IP ACTIVITY table — timestamped logins with public
+# IPv4/IPv6 — plus the subscriber's own phone and e-mail in the document header.
+#
+# Why it matters for FR-9: the case's IPDR identifiers appear nowhere outside the IPDR
+# files themselves, which is why STRONG correlation is evidence-blocked. These logins are
+# an independent source of timestamped IP activity that already carries an MSISDN, so they
+# can correlate against CDR without any invented link.
+profile:
+  id: google_subscriber_info
+  source: IPDR
+  event_type: IP_SESSION
+  # Google stamps every value "Z". Read as IST each login lands 5.5 hours early and
+  # correlates against the wrong window — the A1 hazard, declared rather than assumed.
+  source_tz: UTC
+  match:
+    # Both labels are specific to this export. No telecom IPDR uses "Apple iOS IDFV",
+    # so this cannot take files from ipdr_trai_standard or ipdr_iprange.
+    required_any: ["Apple iOS IDFV", "Activity Type"]
+    required_all: []
+field_map:
+  timestamp_start:
+    aliases: ["Timestamp"]
+    type: datetime
+  ip_public:
+    aliases: ["IP Address"]
+    type: string
+  # Denormalized onto every row by parsers/html_tables.py: the phone lives in the
+  # document's header block, and only BANK normalizers receive `header_identity`.
+  entity_phone:
+    aliases: ["Subscriber MSISDN"]
+    type: phone
+  attributes.activity:
+    aliases: ["Activity Type"]
+    type: string
+  attributes.android_id:
+    aliases: ["Android ID"]
+    type: string
+  # Declared because it is a `required_any` gate token, and because a device identifier
+  # tying an account to a handset is evidence in its own right. A gate token with no
+  # alias is the `required_any`/`field_map` drift the suite already guards against.
+  attributes.idfv:
+    aliases: ["Apple iOS IDFV"]
+    type: string
+  attributes.email:
+    aliases: ["Subscriber e-Mail"]
+    type: string
+  attributes.holder:
+    aliases: ["Subscriber Name"]
+    type: string
+  attributes.account_id:
+    aliases: ["Subscriber Account ID"]
+    type: string

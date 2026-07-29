@@ -7,6 +7,7 @@ log. Normalization/entity-resolution (Phase 2) consumes this.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import tempfile
@@ -15,8 +16,8 @@ from pathlib import Path
 
 from ..core import config
 from ..core.logging_config import get_logger
-from . import detector
-from .parsers import archive, docx_tables, excel, pdf, tabular
+from . import detector, structure
+from .parsers import archive, docx_tables, excel, fixed_width, html_tables, pdf, tabular
 
 log = get_logger(__name__)
 
@@ -177,7 +178,11 @@ def _extract_identity(rows_above: list[list], text_lines: list[str]) -> dict:
         value_pat = (r"(\+?\d[\d\s\-()]{4,24}\d|\+?\d+)" if numeric
                      else r"([A-Za-z][A-Za-z .]+?)")
         for alias in aliases:
-            m = re.search(rf"{re.escape(alias)}\s*[:\-]?\s*{value_pat}(?:\s{{2,}}|\n|$| IFSC| A/C)",
+            # `[.:\-\s]*` rather than `\s*[:\-]?\s*`: a printed HDFC statement writes
+            # "Account No.    : 50200059660555", and the abbreviating period sat between
+            # the alias and the separator, so the account never matched and every row of
+            # an 85-transaction statement was rejected for having no account.
+            m = re.search(rf"{re.escape(alias)}[.:\-\s]*{value_pat}(?:\s{{2,}}|\n|$| IFSC| A/C)",
                           joined, re.I)
             if not m:
                 continue
@@ -262,6 +267,12 @@ def _read_grid(path: str, fmt: str) -> tuple[list[list], list[str]]:
         return (_best_sheet(sheets) if sheets else [[]]), []
     if fmt == "docx":
         return docx_tables.read_grid(path) or [[]], []
+    if fmt == "html":
+        text_lines, grid = html_tables.read(path)
+        return grid or [[]], text_lines
+    if fmt == "fixed":
+        text_lines, grid = fixed_width.read(path)
+        return grid or [[]], text_lines
     text_lines, grid = pdf.read(path)
     return grid, text_lines
 
@@ -450,6 +461,23 @@ def parse_file_multi(path: str) -> list[ParsedFile]:
 
     grid, text_lines = _read_grid(path, fmt)
     sections = _split_grid_sections(grid)
+
+    # Geometry recovery, only where the ordinary path demonstrably failed: a grid holding
+    # several differently-shaped tables, or one whose best header row names a single column.
+    # `pdfplumber` flattens every table on every page into one list of rows, which on
+    # cybercrime-portal exports produced a 495-row grid yielding 0 usable records — the
+    # transaction dates sat on continuation rows that were being discarded as padding.
+    if len(sections) < 2 and structure.enabled() and structure.needs_recovery(grid):
+        recovered = structure.regions(grid)
+        if recovered:
+            log.info("%s: recovered %d table region(s) from broken geometry",
+                     Path(path).name, len(recovered))
+            return [
+                _parsed_from_grid(path, fmt, [headers] + rows, text_lines,
+                                  table_index=i + 1)
+                for i, (headers, rows) in enumerate(recovered)
+            ]
+
     if len(sections) < 2:
         # ordinary one-table file — identical to parse_file, no behaviour change
         return [_parsed_from_grid(path, fmt, grid, text_lines)]
@@ -504,7 +532,8 @@ def _parse_one(p: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool
         out.append(pf)
 
 
-def parse_directory(root: str, include_pdf: bool = True) -> list[ParsedFile]:
+def parse_directory(root: str, include_pdf: bool = True,
+                    skipped_out: list[dict] | None = None) -> list[ParsedFile]:
     """Parse every supported file under a directory tree (bank/, cdr/, ipdr/).
 
     `include_pdf=False` skips PDFs entirely — use for large real-case folders where the
@@ -514,18 +543,75 @@ def parse_directory(root: str, include_pdf: bool = True) -> list[ParsedFile]:
     real cases most structured evidence arrives sealed inside (often nested) archives.
     """
     out: list[ParsedFile] = []
+    skipped: list[dict] = []          # used when the caller supplies no sink
     pdf_cap = config.max_pdf_mb() * 1024 * 1024
     archive_budget = int(config.max_archive_mb() * 1024 * 1024)
     scratch = Path(tempfile.mkdtemp(prefix="erakshak-archives-"))
     try:
-        _walk(Path(root), out, pdf_cap, include_pdf, archive_budget, scratch)
+        _walk(Path(root), out, pdf_cap, include_pdf, archive_budget, scratch,
+              skipped if skipped_out is None else skipped_out)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return out
 
 
+#: Extensions we knowingly cannot read. Separated from genuinely unexpected types so the
+#: reject report can say "we know, and here is why" rather than listing them as mysteries.
+_KNOWN_UNREADABLE = {
+    ".doc": "legacy OLE2 Word — convert to .docx",
+    # `.xml` in these cases is a response manifest, not data: it names the PDF that holds
+    # the content (`ContentInfo: CAF`, `ContentFileName: 7201803066.pdf_DT_CAF_0.pdf`).
+    # Parsing it as a table yields nothing, so it is skipped knowingly.
+    ".xml": "response manifest, points to a PDF — no rows of its own",
+    ".msg": "Outlook message container",
+    ".eml": "email container",
+    ".db": "database file, not a tabular export",
+    ".onetoc2": "OneNote table of contents",
+    ".emmx": "mind-map container",
+}
+
+
+def _record_skip(skipped: list[dict], path: Path, container: str | None = None) -> None:
+    """Record a file the walker never opened.
+
+    `_walk` only parses extensions in FORMAT_BY_EXT and previously dropped everything
+    else with no trace at all — 125 files in one real case, 267 in the other. A row that
+    fails to map is at least counted; a file that is never opened was invisible, so the
+    system could not tell an investigator what it had not looked at. That is the worse
+    failure of the two: it is unknowable from the output.
+    """
+    ext = path.suffix.lower()
+    skipped.append({
+        "file": f"{container} → {path.name}" if container else path.name,
+        "container": container,
+        "reason": f"file not opened: {_KNOWN_UNREADABLE.get(ext, f'unsupported type {ext or chr(40)+chr(41)}')}",
+        "rows": 0,
+        "rejected": 0,
+        "file_skipped": True,
+    })
+
+
+def _content_key(path: Path) -> str | None:
+    """SHA-256 of a file's bytes, or None if it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
 def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
-          archive_budget: int, scratch: Path) -> None:
+          archive_budget: int, scratch: Path, skipped: list[dict]) -> None:
+    # Real case folders carry the same exhibit in several places — one portal export
+    # appeared three times across `fir-0006-2025-u`, and its 830 rows were parsed three
+    # times. Event-level dedup catches the resulting duplicates afterwards, so the output
+    # was never wrong, but the work was wasted and the reject and duplicate counts read as
+    # far worse than the evidence actually is. The copy is recorded rather than ignored:
+    # which exhibits are duplicated is itself part of the chain of custody.
+    seen: dict[str, str] = {}
     for p in sorted(root.rglob("*")):
         if p.name.startswith("~$"):        # Office lock/temp files
             continue
@@ -548,7 +634,21 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
             ):
                 if member.suffix.lower() in detector.FORMAT_BY_EXT:
                     _parse_one(member, out, pdf_cap, include_pdf, origin=p.name)
+                else:
+                    _record_skip(skipped, member, container=p.name)
             continue
 
         if p.suffix.lower() in detector.FORMAT_BY_EXT:
+            key = _content_key(p)
+            if key is not None and key in seen:
+                skipped.append({
+                    "file": p.name, "container": None,
+                    "reason": f"duplicate exhibit: byte-identical to {seen[key]}",
+                    "rows": 0, "rejected": 0, "file_skipped": True, "duplicate_of": seen[key],
+                })
+                continue
+            if key is not None:
+                seen[key] = p.name
             _parse_one(p, out, pdf_cap, include_pdf)
+        else:
+            _record_skip(skipped, p)

@@ -525,3 +525,35 @@ def test_required_all_stays_a_hard_gate():
     assert detector.score_profile(["Tran Date", "Ac_No", "Credit"], profile) == 0.0
     assert detector.score_profile(
         ["Tran Date", "Ac_No", "Credit", "Mandatory Col"], profile) > 0.0
+
+
+def test_a_duplicated_exhibit_is_parsed_once_and_recorded(tmp_path):
+    """One portal export appeared three times across `fir-0006-2025-u` and its 830 rows
+    were parsed three times. Event-level dedup meant the output was never wrong, but the
+    work was wasted and the reject counts read far worse than the evidence.
+
+    The copy is recorded rather than ignored: which exhibits are duplicated is part of the
+    chain of custody.
+    """
+    from backend.app.ingestion import service as ingestion
+
+    body = ("Tran Date,Tran Particular,Debit Amount,Credit Amount\n"
+            "01-02-2024,UPI/1234/PAY,,5000.00\n"
+            "02-02-2024,ATM WDL SURAT,2000.00,\n"
+            "03-02-2024,NEFT-VENDOR,1000.00,\n"
+            "04-02-2024,IMPS/9999/REFUND,,500.00\n")
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "stmt.csv").write_text(body, encoding="utf-8")
+    (tmp_path / "b" / "stmt_copy.csv").write_text(body, encoding="utf-8")
+    (tmp_path / "b" / "other.csv").write_text(
+        body.replace("5000.00", "6000.00"), encoding="utf-8")
+
+    skipped: list[dict] = []
+    parsed = ingestion.parse_directory(str(tmp_path), skipped_out=skipped)
+
+    assert len(parsed) == 2, "byte-identical copy should not be parsed twice"
+    dupes = [s for s in skipped if s.get("duplicate_of")]
+    assert len(dupes) == 1
+    assert dupes[0]["duplicate_of"] == "stmt.csv"
+    assert "byte-identical" in dupes[0]["reason"]

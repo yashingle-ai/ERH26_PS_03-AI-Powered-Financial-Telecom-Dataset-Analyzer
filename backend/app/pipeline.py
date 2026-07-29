@@ -100,8 +100,20 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
     log.info("pipeline base: %s (pdf=%s)", input_dir, include_pdf)
     inv = Investigation(input_dir=input_dir)
 
-    inv.parsed_files = ingestion.parse_directory(input_dir, include_pdf=include_pdf)
-    inv.events, inv.rejects = normalization.normalize_parsed_files(inv.parsed_files)
+    # Files the walker never opened at all. Without this sink they vanished silently —
+    # 125 in one real case, 267 in the other. A row that fails to map is at least
+    # counted; a file that is never opened is unknowable from the output, which is the
+    # worse failure for a tool whose job is to say what the evidence contains.
+    skipped: list[dict] = []
+    inv.parsed_files = ingestion.parse_directory(input_dir, include_pdf=include_pdf,
+                                                 skipped_out=skipped)
+    inv.events, norm_rejects = normalization.normalize_parsed_files(inv.parsed_files)
+    # Parse-time rejects live on each ParsedFile and were being discarded here: the
+    # normalizer's return value replaced the list wholesale, so per-file read failures,
+    # over-cap PDFs and blank-row counts never reached the reject report. That is why
+    # the blank-row count read 0 — the entries were produced and then dropped.
+    parse_rejects = [r for pf in inv.parsed_files for r in (pf.rejects or [])]
+    inv.rejects = parse_rejects + skipped + norm_rejects
     log.info("ingested %d files -> %d events (%d reject entries)",
              len(inv.parsed_files), len(inv.events), len(inv.rejects))
 

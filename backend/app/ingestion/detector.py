@@ -11,11 +11,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..core import config
+from ..core.logging_config import get_logger
 from . import value_typer
+from .parsers import fixed_width
+
+log = get_logger(__name__)
 
 FORMAT_BY_EXT = {
     ".xlsx": "xlsx", ".xls": "xlsx", ".csv": "csv", ".txt": "csv", ".pdf": "pdf",
     ".docx": "docx",
+    # Legal-process web exports (Google SubscriberInfo and similar) arrive as HTML and
+    # were skipped entirely — not even recorded as a reject — because the extension was
+    # absent here. They carry timestamped IP logins and the subscriber's own MSISDN.
+    ".html": "html", ".htm": "html",
 }
 
 # Leading bytes that identify a container regardless of what the file is named.
@@ -71,10 +79,15 @@ def detect_format(path: str) -> str:
         # Legacy Excel — pandas dispatches to xlrd. A legacy .doc also lands here and
         # will fail in the reader, which is reported as a per-file reject.
         return "xlsx"
-    # Plain text: trust the extension for csv/txt, otherwise treat as delimited text
+    # Plain text: a printed bank statement has no delimiter at all, so pandas returns it
+    # as a single `Unnamed: 0` column and nothing can map it — 7,331 rows on one real case.
+    # Content decides, because the extension cannot: these arrive as .txt and .xls alike.
+    if by_ext == "csv" and fixed_width.looks_fixed_width(path):
+        return "fixed"
+    # Otherwise trust the extension for csv/txt/html and treat the rest as delimited text
     # (a .xls that is really a text report parses as one column and is rejected cleanly,
     # rather than blowing up the Excel reader with an opaque engine error).
-    return by_ext if by_ext in ("csv", "pdf") else "csv"
+    return by_ext if by_ext in ("csv", "pdf", "html") else "csv"
 
 
 def _profile_aliases(profile: dict) -> set[str]:
@@ -171,6 +184,42 @@ def score_profile(headers: list[str], profile: dict) -> float:
     return matched / len(fields)
 
 
+def _infer_value_map(headers: list[str], columns: dict[str, list], best: dict) -> dict:
+    """Value-based inference for `detect_profile`. Mutates `best` if it claims the file.
+
+    Split out so the caller can wrap the whole thing in one backstop — see the comment at
+    the call site for what happens when it is not wrapped.
+    """
+    if best["profile"] is None or best["confidence"] == 0.0:
+        # (1) nothing claimed this file on names. Ask the values instead.
+        # Ranked on evidence quantity rather than the reported confidence, which is
+        # capped below the auto-detect threshold and therefore ties across profiles.
+        claim: tuple | None = None
+        for _group, plist in config.profiles().items():
+            for profile in plist:
+                vconf, inferred = value_typer.value_profile_score(
+                    headers, columns, profile)
+                if not vconf:
+                    continue
+                rank = value_typer.value_claim_rank(inferred)
+                if claim is None or rank > claim[0]:
+                    claim = (rank, profile, vconf, inferred)
+        if claim is not None:
+            _rank, profile, vconf, inferred = claim
+            best["profile"] = profile
+            best["confidence"] = vconf
+            best["source"] = profile.get("profile", {}).get("source")
+            return inferred
+
+    if best["profile"] is not None:
+        # (2) fill only what the winning profile's aliases left unmapped.
+        hset = {h.strip().lower() for h in headers if h}
+        return value_typer.infer_targets(
+            headers, columns, best["profile"],
+            already_mapped=set(_mapped_targets(hset, best["profile"])))
+    return {}
+
+
 def detect_profile(headers: list[str], columns: dict[str, list] | None = None) -> dict:
     """Return best-matching profile with confidence + source type across all groups.
 
@@ -201,25 +250,20 @@ def detect_profile(headers: list[str], columns: dict[str, list] | None = None) -
 
     value_map: dict = {}
     if columns and value_typer.enabled():
-        if best["profile"] is None or best["confidence"] == 0.0:
-            # (1) nothing claimed this file on names. Ask the values instead.
-            for _group, plist in config.profiles().items():
-                for profile in plist:
-                    vconf, inferred = value_typer.value_profile_score(
-                        headers, columns, profile)
-                    if vconf > best["confidence"]:
-                        best = {
-                            "profile": profile,
-                            "confidence": vconf,
-                            "source": profile.get("profile", {}).get("source"),
-                        }
-                        value_map = inferred
-        if best["profile"] is not None and not value_map:
-            # (2) fill only what the winning profile's aliases left unmapped.
-            hset = {h.strip().lower() for h in headers if h}
-            value_map = value_typer.infer_targets(
-                headers, columns, best["profile"],
-                already_mapped=set(_mapped_targets(hset, best["profile"])))
+        # Inference is strictly an enhancement, so it is not allowed to cost anything if
+        # it fails. It already did once: an unguarded `int(float("inf"))` on one real LEA
+        # cell raised OverflowError, `_parse_one` caught it far upstream and recorded the
+        # whole file as a zero-row reject, and eleven CDR files plus 118,510 rows
+        # disappeared from a measurement — while the file count stayed identical, which is
+        # what made it look like a mapping regression rather than a crash. A feature whose
+        # purpose is to stop losing files must not be able to lose one.
+        try:
+            value_map = _infer_value_map(headers, columns, best)
+        except Exception as exc:                    # noqa: BLE001 - deliberate backstop
+            log.warning("value-based inference failed for %d headers (%s: %s); "
+                        "falling back to header matching only",
+                        len(headers), type(exc).__name__, exc)
+            value_map = {}
 
     best["value_map"] = value_map
     best["needs_manual_mapping"] = best["confidence"] < config.auto_detect_threshold()

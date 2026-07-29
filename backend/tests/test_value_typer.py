@@ -102,6 +102,67 @@ def test_too_few_values_yields_no_type():
     assert value_typer._column_types(["11DEC2019:09:07:02", ""]) == {}
 
 
+# ---- defects found by running against the real case folders -------------------------
+
+def test_quote_wrapped_excel_accounts_are_recognized():
+    """Real NCRP register cells arrive text-forced: "'50200099412403'" with the
+    apostrophe intact. Typing the raw value matched nothing."""
+    accounts = ["'50200099412403'", "'20100019091781'", "'10052001003779'",
+                "'9946300953'", "'9848410613'", "'20100019091781'",
+                "'348001503055'", "'2402251956151747'"]
+    assert "account_like" in value_typer._column_types(accounts)
+
+
+def test_variable_length_unique_accounts_stay_accounts():
+    """A complaint register lists a different mule account per row, so it is ~100%
+    unique. Demoting it to a reference lost the only column in the case carrying an
+    account and a mobile on the same row."""
+    accounts = ["50200099412403", "9946300953", "348001503055",
+                "2402251956151747", "20100019091781", "10052001003779",
+                "9848410613", "31110240170862"]
+    types = value_typer._column_types(accounts)
+    assert "account_like" in types
+    assert "reference_like" not in types
+
+
+def test_serial_column_with_per_page_resets_is_still_a_serial():
+    """A multi-page PDF register restarts `S No.` on each page, so the run is not
+    sorted — and the column then typed as money and claimed the balance target."""
+    values = [str(i) for i in range(1, 26)] * 2
+    assert value_typer._column_types(values) == {"serial": 1.0}
+
+
+def test_small_integer_code_column_is_not_money():
+    """A `Layer` column of 1, 2, 6 must not reach amount/debit/balance."""
+    assert "amount" not in value_typer._column_types(
+        ["2", "1", "1", "1", "6", "1", "2", "2", "1", "2"])
+
+
+def test_fifteen_digit_indian_accounts_are_accounts():
+    """28 of one real register's 173 accounts are 15 digits (Union/SBI lengths).
+    Excluding all 15-digit values as IMEIs held purity at 0.68, under the gate."""
+    accounts = ["040026900000174", "500101013942036", "924010036411120",
+                "50200099412403", "20100019091781", "348001503055",
+                "10052001003779", "31110240170862"]
+    assert "account_like" in value_typer._column_types(accounts)
+
+
+def test_imsi_and_phone_columns_never_become_accounts():
+    """The other side of the previous test: loosening the 15-digit rule must not let a
+    telecom identifier column claim an account target."""
+    assert "account_like" not in value_typer._column_types(
+        ["405870182224029", "404100123456789"] * 4)
+    assert "account_like" not in value_typer._column_types(
+        ["8180934367", "7500107305", "9876543210", "6123456789"] * 2)
+
+
+def test_serial_survives_repeated_page_headings():
+    """pdfplumber bleeds a repeated `S No.` heading and stray cells into column 0; four
+    junk values out of 119 kept a row counter typed as money."""
+    values = [str(i) for i in range(1, 30)] + ["S\nNo."] + [str(i) for i in range(1, 30)]
+    assert value_typer._column_types(values) == {"serial": 1.0}
+
+
 # ---- fuzzy header tiebreak ---------------------------------------------------------
 
 def test_abbreviations_expand_before_comparison():
@@ -146,6 +207,144 @@ def test_detector_claims_an_alien_bank_table_on_values():
 def test_headers_alone_still_yield_nothing():
     """Proves the recovery comes from values, not from a loosened header rule."""
     assert detector.detect_profile(ALIEN_HEADERS)["source"] is None
+
+
+def test_a_rupee_statement_is_not_claimed_by_the_utc_crypto_profile():
+    """`crypto_exchange_ledger` is source_tz: UTC and declares 7 fields where
+    bank_generic declares 12. Ranked on coverage it wins, and every timestamp in a real
+    rupee statement then shifts by 5.5 hours."""
+    det = detector.detect_profile(ALIEN_HEADERS, _columns(_alien_bank_rows()))
+    assert det["profile"]["profile"]["id"] == "bank_generic"
+    assert (det["profile"]["profile"].get("source_tz") or "IST").upper() == "IST"
+
+
+def test_value_claim_never_bypasses_required_all(bank_profile):
+    """required_all means "this shape is mandatory" — no fallback may skip it."""
+    profile = {
+        "profile": {"id": "strict", "source": "BANK",
+                    "match": {"required_all": ["Mandatory Column"]}},
+        "field_map": bank_profile["field_map"],
+    }
+    score, inferred = value_typer.value_profile_score(
+        ALIEN_HEADERS, _columns(_alien_bank_rows()), profile)
+    assert score == 0.0
+    assert inferred == {}
+
+
+def test_no_non_ist_profile_can_ever_be_claimed_on_values():
+    """Pinned as an invariant over every configured profile, not just the crypto one.
+
+    In a window-based correlation product a 5.5-hour shift does not merely lose hits, it
+    manufactures them: two events that were hours apart land inside the same window.
+    """
+    columns = _columns(_alien_bank_rows())
+    checked = 0
+    for plist in config.profiles().values():
+        for profile in plist:
+            tz = (profile.get("profile", {}).get("source_tz") or "IST").upper()
+            if tz == "IST":
+                continue
+            checked += 1
+            score, inferred = value_typer.value_profile_score(
+                ALIEN_HEADERS, columns, profile)
+            assert score == 0.0, f"{profile['profile']['id']} ({tz}) claimed on values"
+            assert inferred == {}
+    assert checked, "no non-IST profile configured — invariant untested"
+
+
+# ---- inference must never be able to cost a file ------------------------------------
+
+@pytest.mark.parametrize("value", ["inf", "-inf", "Infinity", "INF", "nan", "1e999"])
+def test_non_finite_cells_do_not_raise(value):
+    """A real LEA CDR export carries a cell that floats to infinity.
+    `int(float("inf"))` raises OverflowError, not ValueError — it escaped to
+    `_parse_one`, which recorded the whole file as a zero-row reject. Eleven CDR files
+    and 118,510 rows vanished while the file count stayed identical."""
+    assert value_typer._as_int(value) is None
+    value_typer._column_types(["1", "2", "3", value, "5", "6", "7"])   # must not raise
+
+
+def test_detect_profile_survives_a_broken_inference(monkeypatch):
+    """The backstop. A feature whose purpose is to stop losing files must not be able to
+    lose one, whatever goes wrong inside it."""
+    def explode(*_a, **_k):
+        raise RuntimeError("synthetic inference failure")
+    monkeypatch.setattr(value_typer, "infer_targets", explode)
+    monkeypatch.setattr(value_typer, "value_profile_score", explode)
+
+    headers = ["Account No", "Tran Date", "Tran Particular", "Debit Amount"]
+    columns = {h: ["x"] * 8 for h in headers}
+    det = detector.detect_profile(headers, columns)
+    assert det["source"] == "BANK"            # header match preserved
+    assert det["value_map"] == {}             # inference degraded to nothing
+
+
+# ---- administrative phones must never become subject identifiers -------------------
+
+#: Shape of the real complaint register: mule accounts beside the investigating
+#: officer's contact details.
+REGISTER_HEADERS = ["S No.", "Acknowledgement No", "Account No.", "Layer", "State",
+                    "District", "police Station",
+                    "Name of Complain reported officer", "Designation", "Mobile Number"]
+
+
+def _register_columns() -> dict[str, list]:
+    accounts = ["50200099412403", "20100019091781", "10052001003779", "348001503055",
+                "2402251956151747", "040026900000174", "500101013942036",
+                "924010036411120"]
+    mobiles = ["8977945606", "9121104794", "9490617852", "9490617772",
+               "9493545781", "9440700866", "7382296138", "7382296138"]
+    n = len(accounts)
+    return {
+        "S No.": [str(i + 1) for i in range(n)],
+        "Acknowledgement No": [f"2020225000591{i}" for i in range(n)],
+        "Account No.": accounts,
+        "Layer": ["HDFC0001704"] * n,
+        "State": ["Gujarat"] * n,
+        "District": ["Surat"] * n,
+        "police Station": ["CHEEPURUPALLI"] * n,
+        "Name of Complain reported officer": ["N Nagaraju", "R Anuradha"] * (n // 2),
+        "Designation": ["Police Constable"] * n,
+        "Mobile Number": mobiles,
+    }
+
+
+def test_officer_mobile_never_fills_a_subject_phone_target(bank_profile):
+    """94 of 98 officers in the real register have exactly one mobile, while only 10 of
+    32 accounts do — the phone is a function of the officer, not the account. Linking
+    them would merge mule accounts into police entities, and bridge unrelated mule
+    accounts through a shared officer number."""
+    assert value_typer.has_admin_role_columns(REGISTER_HEADERS)
+    inferred = value_typer.infer_targets(
+        REGISTER_HEADERS, _register_columns(), bank_profile)
+    targets = {s["target"] for s in inferred.values()}
+    assert not (targets & value_typer._SUBJECT_PHONE_TARGETS)
+
+
+def test_an_ordinary_telecom_table_still_maps_its_phones():
+    """The veto must not cost a real CDR its A-party column."""
+    headers = ["Calling Party Number", "Called Party Number", "Call Date", "Duration"]
+    columns = {
+        "Calling Party Number": ["8180934367"] * 8,
+        "Called Party Number": ["7500107305", "9876543210"] * 4,
+        "Call Date": [f"1{i}-06-2024 10:30:00" for i in range(8)],
+        "Duration": ["45", "120", "33", "600", "12", "88", "5", "301"],
+    }
+    assert not value_typer.has_admin_role_columns(headers)
+    profile = next(p for p in config.profiles()["cdr"]
+                   if p["profile"]["id"] == "cdr_generic")
+    inferred = value_typer.infer_targets(headers, columns, profile)
+    targets = {s["target"] for s in inferred.values()}
+    assert "entity_phone" in targets or "counterparty_phone" in targets
+
+
+def test_more_targets_outranks_a_smaller_profile():
+    small = value_typer.value_claim_rank({"a": {"target": "timestamp_start", "confidence": 0.9},
+                                          "b": {"target": "account_no", "confidence": 0.9}})
+    large = value_typer.value_claim_rank({"a": {"target": "timestamp_start", "confidence": 0.8},
+                                          "b": {"target": "account_no", "confidence": 0.8},
+                                          "c": {"target": "debit", "confidence": 0.8}})
+    assert large > small
 
 
 def test_declared_alias_always_beats_an_inferred_mapping():
