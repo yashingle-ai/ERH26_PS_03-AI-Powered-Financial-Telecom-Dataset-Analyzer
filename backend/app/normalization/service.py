@@ -343,7 +343,15 @@ def _dedupe(events: list[dict]) -> tuple[list[dict], int]:
         elif e["event_type"] == "CALL":
             key = ("C", e.get("primary"), e.get("counterparty"), t, a.get("duration"))
         else:  # IP_SESSION
-            key = ("I", e.get("primary"), a.get("public_ip"), t)
+            # A session is who, from where, to where, on which port, and when. Keying on
+            # just (subscriber, public IP, start) collapsed every concurrent session of
+            # one subscriber into a single event: TRAI exports repeat the MSISDN on every
+            # row and often leave Public IP blank, so 37 of 75 real rows were dropped as
+            # "duplicates" when they were distinct connections to different destinations.
+            # Losing which destinations were contacted is losing the evidence itself.
+            key = ("I", e.get("primary"), a.get("public_ip"), a.get("private_ip"),
+                   a.get("port"), a.get("dest_ip"), t,
+                   e["timestamp_end"].isoformat() if e.get("timestamp_end") else "")
         if key in seen:
             dropped += 1
             continue
