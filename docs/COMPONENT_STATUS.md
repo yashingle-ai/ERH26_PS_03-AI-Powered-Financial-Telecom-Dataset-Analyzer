@@ -16,7 +16,7 @@
 | `parsers/tabular.py` (CSV/TXT) | 🟢 | Preamble skip, duplicate-label de-collision |
 | `parsers/pdf.py` | 🟢 | pdfplumber; **text-layer decision** replaces the blunt size cap |
 | `parsers/docx_tables.py` | 🟢 | All tables, not just the first — a single grid dropped 47% of rows |
-| `parsers/fixed_width.py` | 🟢 **new** | Printed statements with no delimiter. One file 0 → 84 events, ledger reconciles exactly |
+| `parsers/fixed_width.py` | 🟢 **new** | Printed statements with no delimiter. Two layouts: HDFC-style headerless, and Bank of Baroda ledger reports. **0 → 743 events** across both cases (73 + 670) |
 | `parsers/html_tables.py` | 🟢 **new** | Google legal-process exports. **IP_SESSION 69 → 4,133** |
 | `parsers/archive.py` | 🟢 | 3-level recursion, 512 MB budget, path-escape refusal; **every loss now reported** |
 | `structure.py` — geometry recovery | 🟢 **new** | Broken PDF grids. Complaint folder 14 → 389 events |
@@ -102,16 +102,44 @@
 
 ## 9. Needs work — ranked
 
+Five items from the previous revision are **closed**, and three of the five were closed by
+*re-measuring* rather than by engineering — the recorded figure was stale. That is now the
+first step for anything on this list.
+
 | # | Item | Size | Why it is not done |
 |---|---|---|---|
-| 1 | Residual broken-geometry PDFs | part of 9,792 rows on FIR-0006 | Further structure work; the biggest remaining recoverable set |
+| 1 | WhatsApp `_chat.txt` | **5,889 rows** — now the single largest recoverable block | ⚪ Blocked on the `MESSAGE` event-type decision, not on code |
 | 2 | Detector primary-only semantics | 15,098 entities | ⚪ Needs its own validation baseline — impact already quantified |
 | 3 | MEDIUM hits absent from risk model | latent | Small fix, but changes risk output → wants a baseline |
-| 4 | F1 threshold calibration | FR-11/12/13 | In the fix queue, unfinished |
-| 5 | Risk heat map in API + React | FR-18 | Exists in Streamlit only |
-| 6 | Location filter on `/v1/events` | FR-15 | DSL path already covers it; the listing endpoint does not |
-| 7 | IPDR row rejects (11 of 18) | FR-3 | F6 open |
-| 8 | STR section content review | FR-17 | Never read against a real case |
+| 4 | F1 threshold calibration | FR-11/12/13 | **Premise weakened — see §9.1.** Needs re-scoping before any gate is touched |
+| 5 | Residual "no time anchor" rows | 17,811 rows | Mostly NCRP state rosters that legitimately carry no timestamps, so largely *not* recoverable as events |
+| 6 | Residual broken-geometry PDFs | 976 rows | Down from 9,792. Long tail, low value per unit of work |
+
+**Closed since the previous revision:** risk heat map (F5, FR-18 green) · location filter
+(F7, FR-15 green) · IPDR row rejects (F6, FR-3 green — figure was stale) · STR content review
+(FR-17 green, four defects fixed) · Bank of Baroda ledger layout (**0 → 743 events**).
+
+### 9.1 F1 needs re-scoping, not tuning
+
+F1's premise is that `high_risk_entities = 0` on `FIR 65-2024` means the FATF gates are
+mis-calibrated for real money. The first full run of `FIR-0006-2025 U` contradicts that: it
+produces **2 high-risk entities and a top score of 85.1 with the identical, unrescaled
+scoring**.
+
+So the gates work. `FIR 65-2024` has no entity exhibiting enough typologies, which is a
+statement about that case's evidence. Two measured causes of its zero, neither a threshold:
+
+1. that case genuinely lacks the typology coverage — confirmed by a second case reaching 85.1
+   on the same config;
+2. `detection/features` aggregates by primary entity only, so 15,098 entities holding
+   transactions solely as a counterparty carry an empty feature vector at **any** threshold
+   (§6).
+
+Rescaling the bands to force a non-zero count on `FIR 65-2024` would have inflated
+`FIR-0006-2025 U` and diluted its two genuine highs. Recommendation: replace "calibrate the
+thresholds" with the **rule eligibility report** F1 already proposes — per rule, how many
+entities were eligible and how many fired — so `eligible=0` and `fired=0` stop looking alike.
+That is the part of F1 that is still clearly worth doing.
 
 ## 10. Needs a decision from you ⚪
 

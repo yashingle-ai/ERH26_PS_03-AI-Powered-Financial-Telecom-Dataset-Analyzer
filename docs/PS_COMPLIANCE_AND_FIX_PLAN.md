@@ -36,16 +36,21 @@ so.
 | 14 | Money-flow + comms graphs, drill-down | 🟢 works | 8,435 nodes on real data, HTTP 200 |
 | 15 | Filter / search (entity, amount, time, location) | 🟢 **works** | all four on **both** paths: the DSL via `/v1/query`, and `/v1/events` directly (`entity`, `location`, `min_amount`/`max_amount`, `start`/`end`) as of 30 Jul. `location` matches tower location or cell id on both, so they answer the same question |
 | 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
-| 17 | STR generation (bonus) | 🟡 reachable, content unreviewed | ships inside the report; the STR section itself has not been read against a real case |
+| 17 | STR generation (bonus) | 🟢 **works, reviewed** | read against real output 30 Jul; four problems found and fixed — grounds were **silently truncated** at 5 and 3, the subject was named only by `label` (a bare account number on real data), there were no transaction particulars, and every high **and medium** entity was told to "freeze/monitor" down to a score of 48.6. Action is now graded by band and no entry recommends a freeze |
 | 18 | Risk heat maps (bonus) | 🟢 **works** | `GET /v1/risk-heatmap/{ds}` returns the entities × typologies matrix; rendered on the React **Detections** page as an accessible table, plus the original Streamlit view. Verified on `demo`: 6 typologies × 5 entities, matrix aligned to both axes, ordered by risk score |
 | 19 | Natural-language query (bonus) | 🟢 works | Gemini 6/6 planned; offline fallback; plain-text answers |
 
-**10 green · 8 amber · 1 red** (was 8 / 7 / 4 at the start of the fix work, 9 / 8 / 2 on
+**11 green · 7 amber · 1 red** (was 8 / 7 / 4 at the start of the fix work, 9 / 8 / 2 on
 28 Jul).
 
 Moved to green on 30 Jul: **FR-3** (every IPDR file present parses with zero row rejects —
 the "11 of 18" figure was stale, F6), **FR-15** (all four filters now on `/v1/events`, not
-only the DSL, F7), **FR-18** (heat map exposed over HTTP and rendered in React, F5).
+only the DSL, F7), **FR-18** (heat map exposed over HTTP and rendered in React, F5), and
+**FR-17** (STR section read against real output; four defects fixed, including grounds of
+suspicion that were being silently truncated).
+
+Three of those four were closed by **re-measuring** rather than by new code — the recorded
+figure was obsolete. That is now the first step for any remaining item.
 
 Remaining red: **FR-9 only**, and it is blocked on evidence rather than code — STRONG is 0 at
 every window from 1 to 60 minutes, so no threshold or parser change reaches it. The narrowest
@@ -65,7 +70,7 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 | F2b | Split stacked tables inside one grid (gap G3) | 4, 1 | 🟢 **DONE** `f9fb19e` — sections +9 (not +127); cleared its baseline |
 | F2c | Profile may claim a file it can demonstrably map | 4 | 🟢 **DONE** `f9fb19e` — unrecognised **747 → 712**, BANK files **78 → 122** |
 | F8 | Blank layout rows recorded under their own reason | 5 | 🟢 **DONE** `f9fb19e` — correct, but **not the win it was billed as**; see the correction below |
-| F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🔵 **IN PROGRESS** — measuring real amount distribution vs the gates |
+| F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🟠 **RE-SCOPED 30 Jul — the calibration half is withdrawn.** `FIR-0006-2025 U` produces **2 high-risk entities, top score 85.1, on the identical unrescaled config**, so the gates are not mis-calibrated; `fir-65-2024` simply has no entity with enough typologies. Rescaling to force a non-zero count there would have inflated this case and diluted its two genuine highs. The **eligibility report** half stands and is the remaining work: `eligible=0` and `fired=0` must stop looking alike. A second measured cause of the zero is unrelated to thresholds — see §7.7 |
 | F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** — now off zero (1 entity), see below |
 | F5 | Risk heat map in the API + React | 18 | 🟢 **DONE** 30 Jul — `GET /v1/risk-heatmap/{ds}` returns the entities × typologies matrix; React renders it on the Detections page as an accessible table (no new charting dependency). Empty state distinguishes "no typology fired" from "nothing evaluated" via `entities_scored` vs `entities_with_a_fired_rule` |
 | F6 | IPDR row rejects (11 of 18) | 3 | 🟢 **DONE — the figure was stale.** Re-measured 30 Jul: the TRAI files parse **21/21 and 54/54 rows with zero rejects**, `ipdr_iprange` 7/7. The one remaining unrecognised IPDR-named file is `IPDR - Common IMEI Report.xlsx`, which is a report rather than session data and is handled by its own path (`er_common_imei`, 10 IMEI↔PHONE links). Closed by the timestamp and value-typing work, not by a targeted fix |

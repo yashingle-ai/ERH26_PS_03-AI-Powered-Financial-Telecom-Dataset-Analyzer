@@ -89,7 +89,7 @@ transaction count, is the useful output of this exercise.
 |---|---|
 | `.html` never opened | **IP_SESSION 69 → 4,133 (×60)**; FR-3 red → amber |
 | PDF size cap vs text layer | **+1,066 transactions**; 14 scans now named in the reject report |
-| Fixed-width statements | one file 0 → 84 events, ledger reconciles exactly |
+| Fixed-width statements | **0 → 743 events** across both cases. *The "0 → 84" quoted in an earlier revision of this file is not reproducible and is withdrawn* |
 | Broken grid geometry | complaint folder 14 → 389 events |
 | Duplicate exhibits | 179 files / 108 MB not re-parsed; parse time **−38%** |
 | `OverflowError` guard | 11 CDR files / 118,510 rows restored |

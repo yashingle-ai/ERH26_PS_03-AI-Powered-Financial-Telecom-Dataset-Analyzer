@@ -155,7 +155,22 @@ header row at all, so columns are identified from their values by the value type
 Narration continuations merge into the record above; repeated page preambles are rejected
 rather than folded into the preceding transaction.
 
-Measured: one file 0 → 84 events, and its debit/credit ledger reconciles exactly.
+Two layouts are handled. The HDFC-style statement has no header row at all, so its columns
+are identified from their values. The **Bank of Baroda "Customer Account Ledger Report"** does
+have a header, written across two lines between rule lines, and it needed three further fixes:
+its report banner (`23-07-2025 18:20:58  BANK OF BARODA…`) was being counted as the first
+record because it starts with a date; the column-gap rule required a position to be blank on
+*every* record line, so one malformed row out of 731 merged the GL and value dates into
+`02-04-2024  02-04-2024` and cost the whole file; and header words are assigned by midpoint
+rather than character slice, because a centred header overhangs its column and slicing gave
+`'lue te'` for `Value Date`.
+
+**Measured: 0 → 743 events** across both cases (73 + 670), attributed by reverting each change
+independently — the column-gap tolerance is worth all 743.
+
+*Correction:* an earlier revision of this file claimed "one file 0 → 84 events". That figure is
+not reproducible; both fixed-width files in these cases were at zero until the gap tolerance
+landed.
 
 ### 2.5 `parsers/pdf.py`
 
