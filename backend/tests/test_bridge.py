@@ -56,3 +56,38 @@ def test_registered_mobile_only_bridges_header_account():
         identity, {"narration_extract": {}}, {"source_file": "t"}, "IST")
     assert mule["primary"] == ("ACCOUNT_NO", "222")
     assert all(t != "PHONE" for t, _ in mule["own_identifiers"])
+
+
+def test_entity_map_ignores_comments_and_blank_lines(tmp_path):
+    """This file is filled in by hand by a case officer, so it will carry notes. A commented
+    instruction parsed as a data row would enter entity resolution as an identifier."""
+    from backend.app.entity_resolution import mapping as er_mapping
+
+    (tmp_path / "entity_map.csv").write_text(
+        "account_no,phone,wallet,upi_id\n"
+        "# NEVER INVENT A ROW — every value must come from KYC\n"
+        "\n"
+        "#   FIR 65-2024\n"
+        "# ,9537658408,,\n"
+        "50100369668648,9825504222,,\n"
+        "   # indented comment\n",
+        encoding="utf-8",
+    )
+    links = er_mapping.load_link_events(str(tmp_path))
+    assert len(links) == 1, [x["own_identifiers"] for x in links]
+    ids = dict(links[0]["own_identifiers"])
+    assert ids["ACCOUNT_NO"] == "50100369668648"
+    assert ids["PHONE"].endswith("9825504222")
+
+
+def test_commented_out_template_rows_create_no_links(tmp_path):
+    """The shipped template lists the five wanted MSISDNs commented out. Until an officer
+    fills in the account and uncomments them they must produce nothing."""
+    from backend.app.entity_resolution import mapping as er_mapping
+
+    (tmp_path / "entity_map.csv").write_text(
+        "account_no,phone,wallet,upi_id\n"
+        "# ,9537658408,,\n# ,9687045370,,\n# ,9099102222,,\n",
+        encoding="utf-8",
+    )
+    assert er_mapping.load_link_events(str(tmp_path)) == []

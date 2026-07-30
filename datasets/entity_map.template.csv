@@ -1,4 +1,41 @@
 account_no,phone,wallet,upi_id
+# ---------------------------------------------------------------------------------------
+# KYC / CAF bridge (FR-6, FR-10, FR-9). Copy into a case folder as `entity_map.csv`.
+# Each row becomes a LINK event that merges the listed identifiers into one entity.
+# Lines starting with # and blank lines are ignored.
+#
+# WHY THIS FILE DECIDES FR-9
+# STRONG correlation needs a transfer, a call and an IP session on ONE entity inside the
+# window. Measured on both real cases: the call and IP legs now exist, the transaction leg
+# does not, because no verified account<->phone pair does. STRONG is 0 at every window from
+# 1 to 60 minutes, so this is not a threshold or window problem — it is a missing fact.
+#
+# NEVER INVENT A ROW
+# An invented account<->phone pair manufactures evidence and can put an innocent person
+# inside a correlation hit. Every value must come from KYC, a CAF, or the case officer.
+# One spreadsheet in FIR 65-2024 looked exactly like this bridge and turned out to carry the
+# investigating officer's mobile beside mule accounts — 94 of 98 officers had exactly one
+# mobile while only 10 of 32 accounts did. Linking it would have merged 32 mule accounts
+# into police-officer entities and bridged unrelated accounts through a shared number.
+#
+# THE FIVE NUMBERS BELOW ARE THE ENTIRE ASK
+# Each already has both call and IP activity in the case material, so supplying the account
+# it belongs to is enough to make STRONG testable — no code change, no inference.
+# Fill in account_no from KYC and remove the leading #.
+#
+#   FIR 65-2024
+# ,9537658408,,
+# ,9687045370,,
+#
+#   FIR-0006-2025 U
+# ,9099102222,,
+# ,9737002222,,
+# ,9825504222,,
+#
+# ---------------------------------------------------------------------------------------
+# Accepted shapes (delete these examples before use):
+#   1. Wide   — account_no,phone,wallet,upi_id — one row per subject, any subset of columns
+#   2. Generic — type_a,value_a,type_b,value_b — one row per link
 50200099412403,9876543210,,
 120031868070,9099102222,,
 ,8058053853,THX65Zgrr63zCBwMcDnDqnd6bCodNYiT4q,

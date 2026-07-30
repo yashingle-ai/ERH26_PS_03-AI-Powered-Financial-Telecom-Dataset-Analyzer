@@ -88,6 +88,25 @@ def _save_model(model, shape, cfg) -> None:
         log.warning("model persistence failed: %s", e)
 
 
+def eligibility(events: list[dict], transfers: list[dict],
+                correlation_hits: list[dict]) -> list[dict]:
+    """Per-rule audit trail: enabled, eligible, fired.
+
+    `rules.eligibility_report` was written and tested but never called by anything, so the
+    one artefact that separates "this rule found nothing" from "this rule could not run" was
+    unreachable — the same shape F3 was in, where the report generator existed with no HTTP
+    route. This is the remaining half of F1, and the half that survives: the calibration half
+    was withdrawn once `FIR-0006-2025 U` reached a top risk score of 85.1 on the identical
+    unrescaled config, proving the gates were never the problem.
+
+    Features are rebuilt here rather than threaded through `detect`, which keeps that
+    function's signature and its callers untouched for one extra pass over the events.
+    """
+    cfg = config.scoring_rules()
+    feats = featmod.build(events, transfers, correlation_hits)
+    return rulemod.eligibility_report(feats, transfers, cfg)
+
+
 def detect(events: list[dict], transfers: list[dict], correlation_hits: list[dict],
            entities: dict) -> dict:
     cfg = config.scoring_rules()

@@ -43,7 +43,11 @@ def load_link_events(input_dir: str, filename: str = "entity_map.csv") -> list[d
         return []
     links: list[dict] = []
     with open(path, encoding="utf-8", errors="replace") as fh:
-        reader = csv.DictReader(fh)
+        # Skip `#` comments and blank lines. This file is filled in by hand by a case
+        # officer, so it will carry notes — and a commented instruction parsed as a data row
+        # would enter entity resolution as an identifier.
+        reader = csv.DictReader(
+            ln for ln in fh if ln.strip() and not ln.lstrip().startswith("#"))
         cols = {c.strip().lower(): c for c in (reader.fieldnames or [])}
         generic = {"type_a", "value_a", "type_b", "value_b"} <= set(cols)
         for row in reader:

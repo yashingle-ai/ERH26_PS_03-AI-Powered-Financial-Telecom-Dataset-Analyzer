@@ -573,6 +573,33 @@ def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: 
     }
 
 
+@v1.get("/rule-eligibility/{ds}")
+def rule_eligibility(ds: str, window: int = 10, user=Depends(require_role("analyst"))):
+    """FR-11/12: per rule, was it enabled, could it apply to this case, and did it fire.
+
+    `0 high-risk entities` reads to an investigator as "nothing suspicious here". This says
+    which of the two it actually is for each rule — `structuring` finding no transaction near
+    the reporting threshold is a legitimate finding about the case, not a missed detection,
+    and it must not look the same as a rule that never ran.
+
+    The computation existed in `rules.eligibility_report` and was tested, but nothing called
+    it, so the distinction was unreachable from the product.
+    """
+    inv = _analyze(ds, window)
+    rows = inv.rule_eligibility or []
+    return {
+        "dataset": ds,
+        "window_minutes": window,
+        "rules": rows,
+        "rules_enabled": sum(1 for r in rows if r.get("enabled")),
+        "rules_disabled": sum(1 for r in rows if not r.get("enabled")),
+        "rules_that_fired": sum(1 for r in rows if (r.get("fired") or 0) > 0),
+        "rules_enabled_but_inert": sum(
+            1 for r in rows
+            if r.get("enabled") and not r.get("fired") and (r.get("eligible") or 0) == 0),
+    }
+
+
 @v1.get("/risk-heatmap/{ds}")
 def risk_heatmap(ds: str, window: int = 10, top: int = Query(20, ge=1, le=200),
                  user=Depends(require_role("analyst"))):

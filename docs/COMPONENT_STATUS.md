@@ -141,14 +141,66 @@ thresholds" with the **rule eligibility report** F1 already proposes — per rul
 entities were eligible and how many fired — so `eligible=0` and `fired=0` stop looking alike.
 That is the part of F1 that is still clearly worth doing.
 
-## 10. Needs a decision from you ⚪
+## 10. Decisions taken, against the problem statement
 
-| Question | Consequence either way |
-|---|---|
-| **Add a `MESSAGE` event type?** | Unlocks 5,148 rows of timestamped WhatsApp chat. Touches the canonical model, correlation, detection, graph and UI — a new baseline. Mapping chat onto `CALL` would put false call records into evidence, so it is this or nothing |
-| **Change detector semantics to participant?** | `rapid_in_out` 20 → 120, `mule_account` 0 → 3. Needs a fresh validation baseline; the current design (participant for relationships, primary for an entity's own behaviour) is coherent, just undocumented in its effect |
-| **Raise the 512 MB archive budget?** | Would extract 534 more members from one archive, including `00002545-Vivek Aadhar card.pdf`. It is a zip-bomb guard, so this is a security trade-off, not a tuning choice |
-| **Request 5 KYC rows from the case officer?** | The only measured path to FR-9 STRONG. Numbers in §11 |
+The problem statement is **ERH26_PS_03 — AI-Powered Financial & Telecom Dataset Analyzer
+(Bank, CDR & IPDR Fusion)**, and its 19 requirements are the scope. Each open question was
+resolved against that rather than against what the data happens to contain.
+
+### 10.1 `MESSAGE` event type for WhatsApp chat — **REJECTED, out of scope** 🔵
+
+5,889 rows of timestamped chat sit unread, and the temptation is to model them. Against the
+problem statement they are not in scope: the fusion named is **Bank, CDR and IPDR**, and no
+requirement covers messaging content. Adding a fourth event type would touch the canonical
+model, correlation tiers, detection features, the graph and the UI — the largest change in the
+system — to serve data the specification does not ask about.
+
+Two narrower alternatives were considered and both rejected on evidence:
+
+- **Map chat onto `CALL`.** Puts false call records into evidence. A message is not a call,
+  and CDR-derived call counts feed `comm_burst` and the correlation tiers.
+- **Emit chat participants as LINK events.** Worse. `LINK` *merges* identifiers into one
+  entity, and two people talking are not one person. This would fuse every participant of a
+  group chat into a single entity — the same failure mode as the officer-phone register,
+  reached by a different route.
+
+Recorded as a scope decision so it is not re-opened as an oversight. If messaging is ever
+added to the specification it needs its own event type and its own validation baseline.
+
+### 10.2 Detector primary-only semantics — **eligibility report first** 🟡
+
+FR-13 (mule-account signatures) is measurably unreachable for 15,098 entities whose
+transactions appear only as a counterparty: `E02650` holds 84 transactions, ₹280,700 in and
+₹268,508 out with `max_rapid_forward` 1.0, and `mule_account` cannot fire on it. A participant
+simulation moves `rapid_in_out` 20 → 120 and `mule_account` 0 → 3.
+
+Flipping the semantics globally is still not the first move, because the **rule eligibility
+report** (§10.4) now makes the gap visible in the product rather than only in a probe. Order
+matters: publish the audit trail, then change what it audits, so the change is measurable
+against something. Flipping first would have altered risk output with no instrument to read it
+against — the mistake this project keeps paying for.
+
+### 10.3 512 MB archive expansion budget — **default unchanged** 🔵
+
+It is a zip-bomb guard on untrusted third-party input, not a tuning parameter, and the 534
+unextracted members of `WhatsApp Chat - Bhai.zip` are overwhelmingly chat media that §10.1
+puts out of scope. It is already configurable as `ingestion.max_archive_mb`, and the
+truncation now produces a reject entry naming the member that exhausted it, so an analyst can
+raise it deliberately for one case. Visibility was the actual defect; the number was not.
+
+### 10.4 F1 threshold calibration — **calibration withdrawn, eligibility report built** 🟢
+
+See §9.1 for why the calibration half is withdrawn. The eligibility report existed in
+`rules.eligibility_report`, fully written and tested, and **nothing ever called it** — the same
+shape F3 was in. It now reaches `Investigation.rule_eligibility`,
+`GET /v1/rule-eligibility/{ds}`, and section 6 of the forensic report.
+
+### 10.5 Five KYC rows from the case officer — **made as easy as possible** 🔴
+
+Still the only measured path to FR-9 STRONG, and still not something code can supply.
+`datasets/entity_map.template.csv` now carries the five MSISDNs as commented rows with the
+reason attached, so the officer fills in one column and deletes a `#`. The loader skips
+comments, and a test pins that the commented rows produce no links until they are filled in.
 
 ## 11. Blocked on evidence, not code 🔴
 

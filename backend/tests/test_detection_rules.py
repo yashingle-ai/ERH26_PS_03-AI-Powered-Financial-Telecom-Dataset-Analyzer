@@ -49,3 +49,45 @@ def test_eligibility_report_separates_never_ran_from_found_nothing():
     # a disabled rule is distinguishable from both
     assert rows["mule_account"]["enabled"] is False
     assert rows["mule_account"]["eligible"] is None
+
+
+# ── the eligibility report must actually reach the product ─────────────────────────
+
+def test_eligibility_reaches_the_investigation_and_the_report():
+    """`rules.eligibility_report` was written and tested but nothing called it, so the one
+    artefact that separates "found nothing" from "could not run" was unreachable — the same
+    shape F3 was in, where the report generator existed with no HTTP route."""
+    from backend.app import pipeline
+    from backend.app.reporting import service as reporting
+
+    inv = pipeline.run("datasets/raw/smoke", window_minutes=10)
+    assert inv.rule_eligibility, "apply_analysis did not populate rule_eligibility"
+
+    names = {r["rule"] for r in inv.rule_eligibility}
+    assert {"structuring", "mule_account", "layering"} <= names
+    for row in inv.rule_eligibility:
+        assert "enabled" in row and "fired" in row
+        # `eligible` may be None only when the rule is disabled outright
+        assert row["eligible"] is not None or not row["enabled"]
+
+    data = reporting.payload_from_investigation(inv, "smoke", 10)
+    table = reporting._eligibility_rows(data)
+    assert table and table[0] == ["Rule", "Enabled", "Eligible", "Fired", "Note"]
+    assert len(table) == len(inv.rule_eligibility) + 1
+
+
+def test_a_rule_with_no_eligible_candidate_is_distinguishable_from_one_that_found_nothing():
+    """The whole point: `fired=0, eligible=0` and `fired=0, eligible=1000` are different
+    findings and must not render identically."""
+    from backend.app.detection.rules import eligibility_report
+
+    cfg = {"rules": {"structuring": {"enabled": True, "weight": 0.2,
+                                     "reporting_threshold_inr": 1_000_000,
+                                     "just_below_band_pct": 0.1,
+                                     "min_occurrences": 3}}}
+    # a case whose largest transfer is nowhere near the reporting threshold
+    small = [{"amount": 5_000.0, "asset": "INR"} for _ in range(50)]
+    row = {r["rule"]: r for r in eligibility_report({}, small, cfg)}["structuring"]
+    assert row["eligible"] == 0
+    assert row["fired"] == 0
+    assert row["note"] and "does not occur here" in row["note"]

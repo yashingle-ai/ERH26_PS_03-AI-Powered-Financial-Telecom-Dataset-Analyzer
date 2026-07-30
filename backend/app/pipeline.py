@@ -41,6 +41,9 @@ class Investigation:
     correlation_hits_medium: list = field(default_factory=list)   # MEDIUM (call+txn, no IP)
     transfers: list = field(default_factory=list)
     risk: dict = field(default_factory=dict)
+    #: Per-rule audit trail (FR-11/12). Separates "found nothing" from "could not run",
+    #: which is the difference between a clean case and an inert detector.
+    rule_eligibility: list = field(default_factory=list)
     graph: dict = field(default_factory=dict)
     data_quality: list = field(default_factory=list)
 
@@ -138,6 +141,11 @@ def apply_analysis(inv: Investigation, window_minutes: int | None = None) -> Inv
     inv.correlation_hits, inv.correlation_hits_medium = window_correlator.split_by_tier(all_hits)
     # Risk coincidence_count uses STRONG only — MEDIUM must not inflate the score.
     inv.risk = detection.detect(inv.events, inv.transfers, inv.correlation_hits, inv.entities)
+    # The audit trail behind the risk numbers. Without it "0 high-risk entities" is
+    # indistinguishable from "the detector never ran", which is the reading an investigator
+    # would take from a clean-looking report.
+    inv.rule_eligibility = detection.eligibility(
+        inv.events, inv.transfers, inv.correlation_hits)
     inv.graph = graph_service.build(inv.events, inv.entities, inv.risk)
     return inv
 
