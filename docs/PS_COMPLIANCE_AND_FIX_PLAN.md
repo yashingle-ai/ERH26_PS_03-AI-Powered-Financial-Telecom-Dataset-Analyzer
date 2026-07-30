@@ -2,8 +2,11 @@
 
 **Problem statement:** ERH26_PS_03 — AI-Powered Financial & Telecom Dataset Analyzer
 (Bank, CDR & IPDR Fusion)
-**Assessed:** 28 Jul 2026, against `fir-65-2024` (505 staged files / 335 MB) unless stated
+**Assessed:** 28 Jul 2026 against `fir-65-2024`; **re-validated 30 Jul 2026 against two full
+case folders** — `FIR 65-2024` (2.0 GB) and `FIR-0006-2025 U` (2.1 GB). §7 carries the current
+figures; §1 rows are updated to match.
 **Method:** every figure measured on this machine. Nothing carried over from a prior report.
+Ingestion figures reproduce with `python -m scripts.measure_ingestion --input <case>`.
 
 This file is the working tracker. Each fix below gets implemented, tested, and its row
 updated with before/after numbers. A fix that does not move its number stays open and says
@@ -17,16 +20,16 @@ so.
 
 | FR | Requirement | Status | Measured evidence |
 |---|---|---|---|
-| 1 | Parse bank statements (Excel/PDF/CSV) | 🟡 works, lossy | **122** BANK files → **36,281 txns** (was 78 / 35,870) |
-| 2 | Parse CDR | 🟢 works | 90 files → **203,046 calls**; 24% rejects are mostly true duplicates |
-| 3 | Parse IPDR | 🔴 barely | 12 files → **69 sessions**; 11 of 18 rows rejected |
-| 4 | Schema mapping / auto-detection | 🟡 improving | **712 of 939 unrecognised** (was 747 of 930); 94 files now claimed by the mappability fallback, all flagged for review |
-| 5 | Row-level reject diagnostics | 🟢 works | **139,534** rows itemised via `/v1/data-quality`; summary now splits `blank_rows` / `unmapped_rows` |
-| 6 | Unified entity model | 🟡 partial | **4,182** entities; **ACCOUNT_NO+PHONE = 1** (was 0) |
+| 1 | Parse bank statements (Excel/PDF/CSV) | 🟡 works, lossy | **140** BANK tables → **39,170 txns** (was 122 / 36,281). Fixed-width print statements and broken-geometry portal PDFs now read |
+| 2 | Parse CDR | 🟢 works | 91 tables → **203,050 calls**; 24% rejects are mostly true duplicates. `calls` invariant across five builds on `FIR-0006-2025 U` (112,174) — see §7.3 |
+| 3 | Parse IPDR | 🟡 no longer barely | **59** IPDR tables → **4,133 sessions** (was 12 / 69). The gain is Google legal-process HTML, not the TRAI files — those still reject 11 of 18 rows (F6 open) |
+| 4 | Schema mapping / auto-detection | 🟡 improving | **658 of 951 unrecognised** (was 712 of 939). Rows stranded in unrecognised tables **23,846 → 16,307**; 101 tables claimed on values, all flagged for review |
+| 5 | Row-level reject diagnostics | 🟢 works | **118,836** rows itemised (was 139,534), split **42,761 non-evidentiary / 76,075 unmapped**; plus **467 files never opened** and **21 duplicate exhibits**, both previously invisible |
+| 6 | Unified entity model | 🟡 partial | **6,681** entities (was 4,182); **ACCOUNT_NO+PHONE = 3** (was 1). 25,695 counting external counterparty singletons — the two figures are not interchangeable, see §7.7 |
 | 7 | Timestamp normalisation | 🟢 works | IST canonical; time-only hazard closed 28 Jul |
 | 8 | Unified timeline | 🟢 works | per-entity, bisect-indexed |
-| 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0 | evidence-blocked, proven at source-file level. MEDIUM = 2 |
-| 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,849 · BENEFICIARY 9,816 · IMEI 30 · IMSI 32 · IP 6 · **ACCOUNT_NO 549** (was 499) · **account↔phone 1** (was 0) |
+| 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0 | **0 at every window from 1 to 60 min** — not a calibration problem. MEDIUM 2 → 6 as W widens. **7 entities now hold CALL+IP** (was 6 with any IP at all); the missing leg is the transaction, i.e. the account↔phone bridge. The original "no IP evidence exists" proof covered only the IPDR files — see §7 |
+| 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,852 · BENEFICIARY 10,413 · PHONE 9,246 · IMEI 30 · IMSI 32 · **IP 18** (was 6) · **ACCOUNT_NO 3,022** (was 549) · **account↔phone 3** (was 1) |
 | 11 | Rules + ML detection | 🟡 works on synthetic only | 6 rules fire on `demo`; **0 high-risk on real** |
 | 12 | Risk scores | 🟡 same cause as FR-11 | demo 3 high / 11 med / 75 low; real **0 high** |
 | 13 | Mule-account signatures | 🟡 same cause as FR-11 | fires on `demo` only |
@@ -37,9 +40,11 @@ so.
 | 18 | Risk heat maps (bonus) | 🟡 Streamlit only | `dashboard/app.py:331` renders entities × typologies as a plotly Heatmap; **no API endpoint, absent from React** |
 | 19 | Natural-language query (bonus) | 🟢 works | Gemini 6/6 planned; offline fallback; plain-text answers |
 
-**9 green · 8 amber · 2 red** (was 8 / 7 / 4 at the start of the fix work).
+**9 green · 9 amber · 1 red** (was 8 / 7 / 4 at the start of the fix work, 9 / 8 / 2 on 28 Jul).
 
-Remaining red: FR-3 (IPDR barely parses) and FR-9 (STRONG correlation, evidence-blocked).
+Remaining red: FR-9 only. FR-3 moved off red on 30 Jul — see §7. It is amber rather than
+green because the gain came from a source nobody had opened, not from fixing the TRAI IPDR
+parser, which still rejects 11 of 18 rows.
 
 ---
 
@@ -326,3 +331,247 @@ Baseline to diff against (28 Jul 2026, `fir-65-2024`, W=10):
    `.env`, no `*.db`.
 5. **Do not redefine a headline metric to make a gate pass.** Add a new field instead — as
    `correlation_hits_medium` did.
+
+---
+
+## 7. Validation cycle — 30 Jul 2026
+
+Two case folders this time, not one: `FIR 65-2024` and `FIR-0006-2025 U`. Every figure below
+is reproducible with `python -m scripts.measure_ingestion --input <case>`, and both recovery
+paths are switchable (`ERAKSHAK_VALUE_TYPING`, `ERAKSHAK_STRUCTURE_RECOVERY`) so the two arms
+of any A/B run the same build. That last point is not a convenience — attributing a
+30,976-event change from run timestamps alone proved impossible without it.
+
+### 7.1 Objective
+
+Stop the pipeline losing files and rows. Four classes of file were producing no events. None
+needed a new profile; they needed to be opened and given a readable shape.
+
+### 7.2 Before / after — `FIR 65-2024`, W=10
+
+| Metric | 28 Jul baseline | 30 Jul | Change |
+|---|---|---|---|
+| files | 930 | 986 | +56 |
+| events | 238,985 | **246,353** | +7,368 |
+| transactions | 35,870 | **39,170** | +3,300 |
+| calls | 203,046 | 203,050 | +4 |
+| **ip_sessions** | 69 | **4,133** | **60x** |
+| entities (non-external) | 4,132 | **6,681** | +2,549 |
+| `ACCOUNT_NO` identifiers | 549 | **3,022** | 5.5x |
+| entities with account **and** phone | 1 | **3** | +2 |
+| rejected_rows | 140,040 | **118,836** | −21,204 |
+| rows stranded in unrecognised tables | 23,846 | **16,307** | −32% |
+| correlation STRONG / MEDIUM | 0 / 2 | 0 / 2 | unchanged |
+| high_risk_entities | 0 | 0 | unchanged |
+| parse seconds | 1,043 | **646** | −38% |
+
+### 7.3 Before / after — `FIR-0006-2025 U` (first validated run)
+
+| Metric | Value |
+|---|---|
+| files / tables | 1,176 / 1,545 |
+| events | **456,423** |
+| transactions | **344,047** |
+| calls | 112,174 |
+| ip_sessions | **202** (was 0 — this case was reported as having no IPDR at all) |
+| rejected_rows | 302,597 (168,735 non-evidentiary / 133,862 unmapped) |
+| unrecognised tables | 1,279 of 1,545 (83%) |
+
+`calls = 112,174` is identical across all five builds measured on this case, through geometry
+recovery, duplicate detection and the preamble fix. That invariance is the strongest evidence
+available that those changes are non-destructive on the telecom path.
+
+### 7.4 Root causes fixed, with attribution
+
+| Fix | Root cause | Measured effect |
+|---|---|---|
+| HTML reader + `google_subscriber` profile | `.html` absent from `FORMAT_BY_EXT`, so Google legal-process responses were never opened | IP_SESSION 69 to 4,133; FIR-0006 0 to 202 |
+| Fixed-width reader | a printed statement has no delimiter, so pandas returned one `Unnamed: 0` column | one file 0 to 84 events, ledger reconciles exactly |
+| Geometry recovery | `pdfplumber` flattens every page's tables into one row list: glued widths, six-row headers, records spanning five rows whose date sat on a discarded continuation | complaint folder 14 to 389 events |
+| Duplicate detection | the same exhibit parsed repeatedly | 179 files / 108 MB on FIR-0006, events unchanged |
+| Instance-level column typing | — | **+23 events. Near-neutral, and not presented as more** |
+
+Attribution matters here: the headline gain is **opening files nobody had opened**, not
+smarter matching. Value typing earns its place only because it is the sole mechanism that can
+map a headerless statement or a recovered region.
+
+### 7.5 The regression, and why it took five attempts
+
+Geometry recovery first **cost 30,976 transactions** on `FIR-0006-2025 U`. Recorded in full
+because the reasoning failures are the instructive part.
+
+| Predicted mechanism | Verdict |
+|---|---|
+| `_coalesce` over-merging a sparse first column | wrong |
+| insufficient row coverage | wrong — 98.2% of rows were inside accepted spans |
+| polluted merged headers breaking aliases | wrong — headers were clean |
+| preamble keyed on the first *span* | wrong — the preamble itself spans two runs |
+
+Three real causes, each found by **measuring**, not reasoning:
+
+1. `['Page Total','0.00','4890309.00']` rows of raw width 3 inside a width-8 table split one
+   9,845-row statement into **183 runs**.
+2. Only **1 of 183** spans began with a label row; `if not header_rows: continue` discarded
+   the other 182 — 10,027 rows became 25 records.
+3. `[headers] + rows` discarded the document preamble holding `Account No | 60532637196`.
+   `_norm_bank` drops a row with no account, so one file went **6,869 transactions to 0** with
+   its records and headers otherwise recovered perfectly.
+
+**Two of the failures were my own instruments.** Both early probes counted *records* while
+the acceptance criterion counts *events*, and a record can survive intact while losing the
+column that made it mappable — which is exactly how cause 3 hid. A "criterion PASSED" was
+declared on that basis and was wrong.
+
+Acceptance criteria, finally measured:
+
+| Criterion | Target | Measured | Result |
+|---|---|---|---|
+| FIR-0006 TRANSACTION | >= 343,932 | 344,047 | PASS (+115) |
+| FIR 65-2024 TRANSACTION | >= 37,916 | 39,170 | PASS (+1,254) |
+| FIR 65-2024 IP_SESSION | >= 4,133 | 4,133 | PASS (+0) |
+
+### 7.6 FR-9 window sweep — the flagship, settled
+
+| Window (min) | 1 | 5 | 10 | 30 | 60 |
+|---|---|---|---|---|---|
+| STRONG | **0** | **0** | **0** | **0** | **0** |
+| MEDIUM | 0 | 0 | 2 | 4 | 6 |
+| high_risk | 0 | 0 | 0 | 0 | 0 |
+| top_risk_score | 54.3 | 54.3 | 54.3 | 54.3 | 54.3 |
+
+Only `TIER_STRONG` and `TIER_MEDIUM` exist in the code; there is no WEAK tier.
+
+**STRONG is 0 across a 60x window range, so FR-9 is not a calibration problem.** MEDIUM grows
+monotonically and entities never leave, which is the expected behaviour and a usable
+consistency check on the correlator.
+
+What changed since §4 is the *reason*, not the count. §4 proved that the IPDR identifiers
+appear in no CDR file — and that proof holds. But it covered only the IPDR files, and a second
+source of IP activity existed that the walker never opened. **7 entities now hold both call
+and IP evidence.** The missing leg is the transaction, which needs a real account-to-phone link.
+
+**The narrowest useful evidence request** — five KYC rows, for MSISDNs that already have both
+call and IP activity:
+
+```
+FIR 65-2024     : +919537658408  +919687045370
+FIR-0006-2025 U : +919099102222  +919737002222  +919825504222
+```
+
+One row each in `entity_map.csv` makes STRONG testable with no new code and no inferred link.
+That is a smaller ask than the archive password in §4, which remains open but is now the
+second priority.
+
+### 7.7 Entity semantics — participant vs primary
+
+Measured across pipeline stages, because two metrics disagreed and the disagreement was real:
+
+| Stage | Semantics | Verdict |
+|---|---|---|
+| `timeline_builder` | primary | inconsistent with the correlator; `correlate` works around it by re-deriving transactions |
+| `window_correlator._by_participant` | participant | intentional, documented in the docstring |
+| `money_flow` | primary-to-primary, primary-to-counterparty on fallback | intentional, documented |
+| `graph.service` | participant | intentional |
+| `detection/features` | **primary** | design decision with a defect consequence — below |
+
+Runtime evidence on `FIR 65-2024`: **15,098** entities hold transactions only as a
+counterparty. Simulating participant semantics without changing production code:
+
+| Rule | Production | Participant sim | Reads |
+|---|---|---|---|
+| `structuring` | 0 | 0 | `feats` |
+| `rapid_in_out` | 20 | **120** | `feats` |
+| `mule_account` | **0** | **3** | `feats` |
+| `layering` | 55 | 55 | `transfers` |
+| `circular_flow` | 15 | 15 | `transfers` |
+
+`layering` and `circular_flow` are unchanged because they read `transfers`, which already
+carries counterparty flows. Only the three `feats`-driven rules are affected.
+
+Entity **E02650** — one of the two MEDIUM correlation hits — holds **84 transactions,
+Rs 280,700 in and Rs 268,508 out, `max_rapid_forward` = 1.0**, and the detector scores it with
+an empty feature vector (`txn_count` = 0). Money in approximately equal to money out with
+total rapid forwarding is the mule signature the case is looking for, and `mule_account`
+cannot fire on it.
+
+This is a **second, independent cause** of `high_risk_entities = 0`, alongside F1's threshold
+calibration. Re-tuning F1 alone could never surface these entities, because their feature
+vector is empty at any threshold. The design intent is coherent — participant semantics for
+relationships, primary for an entity's own behaviour — but its consequence is invisible, which
+violates rule 2: a rule that never ran must not look like a rule that found nothing.
+
+Also measured: `coincidence_count` = 0 for both MEDIUM entities, because `apply_analysis`
+passes STRONG hits only to `detection.detect`. Harmless while STRONG is 0; a bug the moment it
+is not. It also explains why `top_risk_score` stayed at exactly 54.3 across all five windows.
+
+**No detector semantics were changed.** Doing so needs its own validation baseline.
+
+### 7.8 What "never opened" actually contains
+
+A bare count reads as unread evidence tables. It is not:
+
+| Category | FIR 65-2024 | FIR-0006-2025 U |
+|---|---|---|
+| non-tabular (image / media / system) | 140 (37%) | **1,974 (90%)** |
+| container (holds other files) | 214 (56%) | 125 (6%) |
+| **potentially tabular, no reader** | **25 (7%)** | **22 (1%)** |
+| unknown / other | 1 | 70 |
+
+The actionable bucket is **47 files across both cases**, and 42 of them are legacy `.doc`.
+Everything else is photographs, `.opus` voice notes, `.tif` scans and Outlook containers.
+Reporting the aggregate without this split would misdirect effort at 2,571 files when the real
+backlog is 47.
+
+Two reconciliation notes, kept because the discrepancy was real and explained rather than
+smoothed over. The pipeline counts 467 / 1,788 where this census counts 380 / 2,191:
+
+- FIR 65-2024 has **96 nested `.zip` members**; the pipeline recurses three levels deep and
+  finds members the one-level census never sees.
+- FIR-0006 holds **1,679 MB uncompressed**, and `WhatsApp Chat - Bhai.zip` alone is 1,079 MB,
+  exceeding the 512 MB expansion budget — extraction stops early, so the pipeline sees fewer
+  members than exist.
+
+That truncation **is** logged (`archive ... exceeds expansion budget — stopping`) but never
+reaches the reject report, so it is invisible in `/v1/data-quality`. By rule 2 it should be a
+reject entry, not just a log line. Open.
+
+### 7.9 Performance
+
+| | 28 Jul | 30 Jul |
+|---|---|---|
+| `FIR 65-2024` parse | 1,043 s | **646 s** (−38%) |
+| `FIR-0006-2025 U` parse | — | 2,653 s |
+
+Faster despite doing strictly more work, because duplicate exhibits are now parsed once.
+
+### 7.10 Remaining limitations
+
+1. **FR-9 STRONG = 0** — blocked on the account-to-phone bridge, not on code, not on the window.
+2. **`account+phone` = 3** is genuine and small. The one file that looked like the bridge
+   carries the *investigating officer's* mobile beside mule accounts — 94 of 98 officers have
+   exactly one mobile, only 10 of 32 accounts do, and one constable's number spans two
+   accounts. Linking those rows would merge mule accounts into police entities. The guard is
+   `has_admin_role_columns`; the low count is that guard working, not a defect.
+3. **WhatsApp `_chat.txt` — 5,148 rows** of timestamped communication with no home in the
+   canonical model. Mapping it onto `CALL` would put false call records into evidence. Adding
+   a `MESSAGE` type is a model change and a new baseline, not a fix.
+4. **Detector blind to counterparty-side transactions** — §7.7. Quantified, not fixed.
+5. **`_Doc_202404201542344604122.pdf` loses 10 of 125 events** under recovery. Unexplained,
+   0.003% of the dataset. Recorded as unexplained rather than assumed benign — assuming a
+   small residual was harmless is exactly what produced the false PASS in §7.5.
+6. **Archive budget truncation is not surfaced** in the reject report — §7.8.
+7. **Reference/roster tables** (~4,000 rows) are correctly refused: no timestamps, no
+   transactions. Not recoverable as events.
+
+### 7.11 Traps added to the list
+
+- **Count the quantity the criterion names.** Two probes measured records while the criterion
+  measured events, and a record survives intact while losing the column that made it mappable.
+- **Never attribute a change to code from run timestamps.** Add a flag and run both arms on
+  one build.
+- **A non-empty result is not a correct result.** Recovery replaced a 10,027-row table with 25
+  records and the integration accepted it because the output was merely non-empty.
+- **A safety invariant only guards what it measures.** The row-accounting check caught the
+  10,027 to 25 collapse and could not have caught the preamble loss, where every row survived.
+- **Do not run three case-scale jobs at once.** Three concurrent passes exhausted memory and
+  killed a run with `MemoryError` in an unrelated function.
