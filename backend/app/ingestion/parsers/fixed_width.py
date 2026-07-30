@@ -38,6 +38,13 @@ from pathlib import Path
 #: A record begins with a date in the left margin. Used both to decide whether a text file
 #: is a fixed-width statement at all and to separate records from their continuations.
 _RECORD_START = re.compile(r"^\s{0,10}(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})(?:\s|$)")
+#: A report banner, not a transaction: a date immediately followed by a clock. Bank of
+#: Baroda prints `23-07-2025 18:20:58    BANK OF BARODA, SFS MANSAROVAR` at the top of every
+#: page, and it begins with a date, so it matched `_RECORD_START` and became "record 1".
+#: That put `first` at the banner, leaving no preamble to search and burying the real
+#: two-line column header inside the record block — 1,500 rows classified on values alone.
+_REPORT_BANNER = re.compile(
+    r"^\s{0,10}\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?\b")
 
 #: Delimiters that mean the file belongs to pandas, not here.
 _DELIMITERS = (",", "\t", "|", ";")
@@ -74,13 +81,97 @@ _LABELLED_LINE = re.compile(r"[A-Za-z]\s*:\s")
 _MAX_CONTINUATION_COLUMNS = 3
 
 
+#: Lines above the first record examined for a column-header block.
+_HEADER_LOOKBACK = 14
+#: A rule line drawn under or over the header — `-----` or `=====`.
+_RULE_LINE = re.compile(r"^[\s\-=_]+$")
+#: Header cells needed before a recovered header block replaces the positional names.
+_MIN_HEADER_CELLS = 3
+
+
+def _header_from_preamble(lines: list[str], first: int,
+                          spans: list[tuple[int, int]]) -> list[str] | None:
+    """Recover real column names from a header block above the first record.
+
+    The original assumption — "there is no column header row at all" — held for the printed
+    HDFC statement this reader was built for, but not generally. A Bank of Baroda
+    "Customer Account Ledger Report" writes its header across two lines between rule lines:
+
+        -------------------------------------------------------------------------
+          GL.     Value       Instrmnt   Particulars      Transaction   Transac
+          Date    Date         Number                    Debit Amount  Credit Am
+        -------------------------------------------------------------------------
+        02-04-2024  02-04-2024     62353 TO CASH          1,10,000.00
+
+    Synthesising `column_0..N` there threw away `Particulars`, `Debit Amount` and
+    `Credit Amount` — all existing profile aliases — leaving 1,500 rows of real transactions
+    to be classified on values alone and reported as "header row not found".
+
+    Returns None when no such block exists, so the positional fallback still applies.
+    """
+    collected: list[list[str]] = []
+    for i in range(first - 1, max(first - 1 - _HEADER_LOOKBACK, -1), -1):
+        line = lines[i]
+        if not line.strip() or _RULE_LINE.match(line):
+            continue
+        # A `Label : value` line is preamble, not a column header, and reaching one means
+        # the header block (if any) has been passed.
+        if _LABELLED_LINE.search(line):
+            break
+        cells = _assign_words(line, spans)
+        filled = [c for c in cells if c]
+        # A header line spans the table. One or two cells is a stray note such as
+        # "Order by GL. Date." sitting between the rule and the data.
+        if len(filled) < _MIN_HEADER_CELLS:
+            continue
+        # Values, not labels — the record block has been reached.
+        if _RECORD_START.match(line) or any(
+                re.search(r"\d{2}[-/]\d{2}[-/]\d{2,4}|\d,\d{2,3}", c) for c in filled):
+            break
+        collected.append(cells)
+        if len(collected) >= 3:
+            break
+
+    if not collected:
+        return None
+    collected.reverse()                      # restore top-to-bottom order
+    merged: list[str] = []
+    for col in range(len(spans)):
+        parts = [row[col] for row in collected if col < len(row) and row[col]]
+        merged.append(" ".join(parts).strip())
+    if sum(1 for h in merged if h) < _MIN_HEADER_CELLS:
+        return None
+    return [h or f"column_{i}" for i, h in enumerate(merged)]
+
+
+def _assign_words(line: str, spans: list[tuple[int, int]]) -> list[str]:
+    """Assign each word of a header line to the column its midpoint falls in.
+
+    Character slicing is right for data, which is aligned to the spans by construction, and
+    wrong for headers, which are centred or right-aligned over their column and overhang it.
+    Slicing produced `'lue te'` for `Value Date` and `'ransaction bit Amount'` for
+    `Transaction Debit Amount` — names an analyst would read as corruption. Matching on the
+    word midpoint tolerates the overhang.
+    """
+    cells = [""] * len(spans)
+    for m in re.finditer(r"\S+", line):
+        mid = (m.start() + m.end()) // 2
+        for col, (a, b) in enumerate(spans):
+            # widen slightly: a header word may sit just outside its column's data extent
+            if a - 2 <= mid < b + 2:
+                cells[col] = f"{cells[col]} {m.group()}".strip()
+                break
+    return cells
+
+
 def _lines(path: str) -> list[str]:
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
 def _record_lines(lines: list[str]) -> list[int]:
-    return [i for i, ln in enumerate(lines) if _RECORD_START.match(ln)]
+    return [i for i, ln in enumerate(lines)
+            if _RECORD_START.match(ln) and not _REPORT_BANNER.match(ln)]
 
 
 def looks_fixed_width(path: str) -> bool:
@@ -124,12 +215,25 @@ def _is_delimited(body: list[str]) -> bool:
     return False
 
 
+#: Share of record lines that must be blank at a position for it to count as a column gap.
+#: Requiring *every* line meant one malformed row collapsed two real columns: on a Bank of
+#: Baroda ledger, 730 of 731 records separated the GL date from the value date by two spaces,
+#: and the single exception merged them into `02-04-2024  02-04-2024`. That cell parses as
+#: neither date, so `_norm_bank` dropped all 731 rows for "missing timestamp".
+#: One bad row must not be able to destroy the layout for the rest.
+_GAP_BLANK_SHARE = 0.98
+
+
 def _boundaries(rows: list[str]) -> list[tuple[int, int]]:
-    """Column spans, inferred from character positions blank in EVERY record line."""
+    """Column spans, inferred from character positions blank in nearly every record line."""
     if not rows:
         return []
     width = max(len(r) for r in rows)
-    blank = [all(i >= len(r) or r[i] == " " for r in rows) for i in range(width)]
+    threshold = max(1, int(len(rows) * _GAP_BLANK_SHARE))
+    blank = [
+        sum(1 for r in rows if i >= len(r) or r[i] == " ") >= threshold
+        for i in range(width)
+    ]
 
     spans: list[tuple[int, int]] = []
     start: int | None = None
@@ -171,7 +275,9 @@ def read(path: str) -> tuple[list[str], list[list[str]]]:
     first, last = starts[0], starts[-1]
     preamble = [ln.strip() for ln in lines[:first] if ln.strip()]
 
-    header = [f"column_{i}" for i in range(len(spans))]
+    # Use the source's own column names when it has them; fall back to positional.
+    header = (_header_from_preamble(lines, first, spans)
+              or [f"column_{i}" for i in range(len(spans))])
     grid: list[list[str]] = [header]
     starts_set = set(starts)
     for i in range(first, min(last + 1, len(lines))):

@@ -10,6 +10,7 @@ from their values. That makes this the case the instance-level matcher exists fo
 
 from __future__ import annotations
 
+import re
 import textwrap
 
 from backend.app.ingestion import detector
@@ -213,3 +214,109 @@ def test_small_decimal_amount_is_money_not_a_clock(tmp_path):
     charge = [e for e in events if "NEFT CHARGE" in (e["attributes"]["narration"] or "")]
     assert charge and charge[0]["amount"] == 23.60
     assert charge[0]["direction"] == "DEBIT"
+
+
+# ── Bank of Baroda "Customer Account Ledger Report" ────────────────────────────────
+#
+# A second fixed-width layout, and one that yielded ZERO events until three separate
+# assumptions were corrected. Measured across both real case folders: 0 -> 743 events.
+
+#: Built with the same field widths as `_bob_row` so the header words sit over their own
+#: columns, which is what a real printed ledger does and what midpoint assignment relies on.
+_BOB_HEADER = (
+    "-" * 106 + "\n"
+    f" {'GL.':<10}  {'Value':<10}  {'Particulars':<32}  "
+    f"{'Transaction':>13}  {'Transaction':>14}  {'Balance':>15}\n"
+    f" {'Date':<10}  {'Date':<10}  {'':<32}  "
+    f"{'Debit Amount':>13}  {'Credit Amount':>14}  {'':>15}\n"
+    + "-" * 106 + "\n"
+)
+
+
+def _bob(rows: list[str]) -> str:
+    """A BoB ledger: report banner, preamble, ruled two-line header, then records."""
+    return (
+        " 23-07-2025 18:20:58        BANK OF BARODA, SFS MANSAROVAR, RAJASTHAN\n"
+        "                          Customer Account Ledger Report\n"
+        " Account No       : 39770200001891    INR SHUBHAM FASHION\n"
+        " Opening Balance  :          1,24,081.00Cr\n"
+        + _BOB_HEADER
+        + "\n".join(rows)
+        + "\n"
+    )
+
+
+def _bob_row(day: int, narration: str, debit: str = "", credit: str = "") -> str:
+    """Two spaces between every field — that is what makes the layout inferable."""
+    return (f" {day:02d}-04-2024  {day:02d}-04-2024  {narration:<32}  "
+            f"{debit:>13}  {credit:>14}  {'1,24,081.00Cr':>15}")
+
+
+def test_one_malformed_row_must_not_collapse_two_columns(tmp_path):
+    """`_boundaries` required a position to be blank in EVERY record line, so a single bad
+    row merged the GL date and value date into `02-04-2024  02-04-2024`. That cell parses as
+    neither date and `_norm_bank` dropped every row — 731 of them on the real file."""
+    rows = [_bob_row(d, f"RTGS-TRANSFER-{d}",
+                     **({"credit": "3,01,000.00"} if d % 2 else {"debit": "2,000.00"}))
+            for d in range(2, 20)]
+    # one row where the two dates are separated by a single space, not two
+    rows.append(" 21-04-2024 21-04-2024  SINGLE SPACE ROW                    "
+                "     1,000.00                   1,24,081.00Cr")
+    p = _write(tmp_path, _bob(rows), "bob.txt")
+
+    pf = ingestion.parse_file(str(p))
+    events, _ = normalization.normalize_parsed_files([pf])
+    assert len(events) >= len(rows) - 1, "the malformed row collapsed the date columns"
+    assert all(e["timestamp_start"] is not None for e in events)
+
+
+def test_report_banner_is_not_a_transaction(tmp_path):
+    """The banner `23-07-2025 18:20:58  BANK OF BARODA...` starts with a date, so it matched
+    `_RECORD_START` and became record 1. That put the first record at the banner, leaving no
+    preamble to search and burying the real column header inside the record block."""
+    rows = [_bob_row(d, f"NEFT-{d}",
+                     **({"credit": "3,01,000.00"} if d % 2 else {"debit": "1,10,000.00"}))
+            for d in range(2, 12)]
+    p = _write(tmp_path, _bob(rows), "bob_banner.txt")
+
+    lines = fixed_width._lines(str(p))
+    starts = fixed_width._record_lines(lines)
+    assert starts, "no records detected"
+    first = lines[starts[0]]
+    assert "BANK OF BARODA" not in first
+    assert re.match(r"^\s*\d{2}-04-2024", first)
+
+
+def test_real_column_names_are_recovered_from_the_header_block(tmp_path):
+    """Synthesising `column_0..N` threw away `Particulars`, `Debit Amount` and
+    `Credit Amount` — all existing profile aliases. Character-slicing the header gave
+    `'lue te'` for `Value Date`, so words are assigned by midpoint instead."""
+    rows = [_bob_row(d, f"RTGS-PAYEE-{d}",
+                     **({"credit": "2,50,000.00"} if d % 2 else {"debit": "5,000.00"}))
+            for d in range(2, 14)]
+    p = _write(tmp_path, _bob(rows), "bob_header.txt")
+
+    _preamble, grid = fixed_width.read(str(p))
+    headers = grid[0]
+    assert not any(h.startswith("column_") for h in headers[:3]), headers
+    joined = " | ".join(headers)
+    assert "Particulars" in joined
+    assert "Date" in joined
+    # no truncated fragments of real words
+    assert "lue te" not in joined
+
+
+def test_bob_ledger_produces_events_with_account_from_the_preamble(tmp_path):
+    """End to end: the account number lives in the preamble, and `_norm_bank` drops any row
+    without one."""
+    rows = [_bob_row(d, f"RTGS-SENDER-{d}",
+                     **({"credit": "3,77,000.00"} if d % 2 else {"debit": "9,000.00"}))
+            for d in range(2, 16)]
+    p = _write(tmp_path, _bob(rows), "bob_e2e.txt")
+
+    pf = ingestion.parse_file(str(p))
+    assert pf.source_type == "BANK"
+    assert pf.header_identity.get("account_no") == "39770200001891"
+    events, _ = normalization.normalize_parsed_files([pf])
+    assert events
+    assert all(e["primary"] == ("ACCOUNT_NO", "39770200001891") for e in events)
