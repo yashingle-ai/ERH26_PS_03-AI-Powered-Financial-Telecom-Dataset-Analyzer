@@ -80,8 +80,13 @@ _RE_DERIVED_ROW = re.compile(
 _MIN_ROW_ACCOUNTING = 0.5
 
 _RE_DATEISH = re.compile(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b")
-_RE_MONEYISH = re.compile(r"^\s*[-+(]?\s*(?:₹|rs\.?|inr)?\s*\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|"
-                          r"^\s*\d+\.\d{2}\s*$", re.I)
+#: A trailing Cr/Dr marker is part of the amount on Indian statements, so `40.00Cr` has to
+#: read as a value. Without it, a header row carrying an opening balance was classed as a
+#: label row and merged into the column names — `Balance 40.00Cr` — which then lost the
+#: header-detection contest to a repeated page header and cost 11 records.
+_RE_MONEYISH = re.compile(r"^\s*[-+(]?\s*(?:₹|rs\.?|inr)?\s*\d{1,3}(?:,\d{2,3})+(?:\.\d+)?"
+                          r"\s*(?:cr|dr)?\)?\s*$|"
+                          r"^\s*\d+\.\d{2}\s*(?:cr|dr)?\s*$", re.I)
 _RE_SERIALISH = re.compile(r"^\s*\d{1,4}\s*$")
 _RE_LONG_DIGITS = re.compile(r"\d{9,}")
 

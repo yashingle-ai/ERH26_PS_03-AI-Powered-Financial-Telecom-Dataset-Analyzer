@@ -338,8 +338,19 @@ def _parse_csv(path: str, fmt: str) -> ParsedFile:
 
 def _parsed_from_grid(path: str, fmt: str, grid: list[list], text_lines: list[str],
                       table_index: int = 0,
-                      identity_rows: list[list] | None = None) -> ParsedFile:
-    header_idx = _find_header_row(grid)
+                      identity_rows: list[list] | None = None,
+                      header_idx: int | None = None) -> ParsedFile:
+    """Build a ParsedFile from a grid.
+
+    `header_idx` is for callers that already KNOW where the header is. Geometry recovery
+    hands over `[headers] + rows`, and re-detecting on that grid silently discarded every
+    row above whatever `_find_header_row` picked instead. On one real statement it chose a
+    repeated page header 11 rows down — because `_merge_header` had absorbed an opening
+    balance into the true header (`Balance 40.00Cr`, 4 alias hits) while the page header was
+    clean (`Balance`, 6 hits) — and 11 records with 10 transactions were dropped.
+    """
+    if header_idx is None:
+        header_idx = _find_header_row(grid)
     headers = _dedupe_headers([str(c).strip() for c in grid[header_idx]]) if grid else []
     base_prov = {"source_file": Path(path).name, "format": fmt}
     if table_index:
@@ -478,8 +489,11 @@ def parse_file_multi(path: str) -> list[ParsedFile]:
             # by passing its preamble down.
             preamble = structure.document_preamble(grid, recovered)
             return [
+                # header_idx=0: recovery already resolved the header, so re-detecting it
+                # here can only lose rows above whatever gets picked instead.
                 _parsed_from_grid(path, fmt, [headers] + rows, text_lines,
-                                  table_index=i + 1, identity_rows=preamble)
+                                  table_index=i + 1, identity_rows=preamble,
+                                  header_idx=0)
                 for i, (headers, rows, _start) in enumerate(recovered)
             ]
 
@@ -685,6 +699,10 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
                 str(p), dest,
                 max_total_bytes=archive_budget,
                 max_depth=config.max_archive_depth(),
+                # Budget truncation, depth refusals, encrypted and unreadable members were
+                # log-only, so an archive that yielded less than it contained looked
+                # complete in the reject report.
+                skipped_out=skipped,
             ):
                 if member.suffix.lower() in detector.FORMAT_BY_EXT:
                     _parse_one(member, out, pdf_cap, include_pdf, origin=p.name,

@@ -86,21 +86,49 @@ def _write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path,
     raise RuntimeError("encrypted")
 
 
+def _note(skipped_out: list[dict] | None, archive: str, reason: str,
+          member: str | None = None, count: int = 0) -> None:
+    """Record something an archive did not yield, so it reaches the reject report.
+
+    Budget exhaustion, depth refusal and encrypted members were previously log-only. On
+    `FIR-0006-2025 U` that hid a real truncation: `WhatsApp Chat - Bhai.zip` is 1,079 MB
+    uncompressed against a 512 MB budget, so extraction stopped part-way and nothing in
+    `/v1/data-quality` said so. Rule 2 asks for a reject entry, not a log line.
+    """
+    if skipped_out is None:
+        return
+    skipped_out.append({
+        "file": f"{archive} → {member}" if member else archive,
+        "container": archive,
+        "reason": reason,
+        "rows": 0,
+        "rejected": 0,
+        "file_skipped": True,
+        "members_unextracted": count,
+    })
+
+
 def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
                     max_depth: int = 3, _depth: int = 0,
-                    _budget: list[int] | None = None) -> list[Path]:
+                    _budget: list[int] | None = None,
+                    skipped_out: list[dict] | None = None) -> list[Path]:
     """Expand `path` under `dest`, recursing into nested archives. Returns extracted files.
 
     `max_total_bytes` is the *uncompressed* budget across the whole expansion, shared by
     nested archives — the guard against a zip bomb, where a small archive expands to
     gigabytes. Exceeding it stops extraction and logs; it never raises, because one bad
     archive must not abort ingestion of the rest of the case.
+
+    `skipped_out` collects what the archive did not yield. Without it those losses are
+    invisible downstream, which is the failure this parameter exists to close.
     """
     if _budget is None:
         _budget = [max_total_bytes]
     if _depth > max_depth:
         log.info("archive nesting deeper than %d levels, not descending: %s",
                  max_depth, Path(path).name)
+        _note(skipped_out, Path(path).name,
+              f"archive not expanded: nesting deeper than {max_depth} levels")
         return []
 
     out: list[Path] = []
@@ -108,17 +136,29 @@ def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
     encrypted = 0
     try:
         with zipfile.ZipFile(path) as zf:
-            for info in zf.infolist():
+            members = zf.infolist()
+            for position, info in enumerate(members):
                 if info.is_dir() or _is_noise(info.filename):
                     continue
                 if info.file_size > _budget[0]:
-                    log.warning("archive %s exceeds expansion budget at %s — stopping",
-                                Path(path).name, info.filename)
+                    remaining = sum(1 for m in members[position:]
+                                    if not m.is_dir() and not _is_noise(m.filename))
+                    log.warning("archive %s exceeds expansion budget at %s — stopping "
+                                "(%d member(s) unextracted)",
+                                Path(path).name, info.filename, remaining)
+                    _note(skipped_out, Path(path).name,
+                          f"archive truncated: expansion budget of "
+                          f"{max_total_bytes / 1e6:.0f}MB exhausted — "
+                          f"{remaining} member(s) unextracted",
+                          member=info.filename, count=remaining)
                     break
                 target = _safe_destination(dest, info.filename)
                 if target is None:
                     log.warning("refusing archive member escaping destination: %s",
                                 info.filename)
+                    _note(skipped_out, Path(path).name,
+                          "member refused: path escapes the extraction directory",
+                          member=info.filename)
                     continue
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -131,9 +171,13 @@ def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
                         encrypted += 1
                     else:
                         log.warning("member %s unreadable: %s", info.filename, e)
+                        _note(skipped_out, Path(path).name,
+                              f"member unreadable: {e}", member=info.filename)
                     continue
                 except (OSError, zipfile.BadZipFile) as e:
                     log.warning("member %s unreadable: %s", info.filename, e)
+                    _note(skipped_out, Path(path).name,
+                          f"member unreadable: {e}", member=info.filename)
                     continue
                 _budget[0] -= info.file_size
                 if target.suffix.lower() == ".zip":
@@ -143,15 +187,20 @@ def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
     except (zipfile.BadZipFile, OSError) as e:
         # A corrupt archive is evidence too — report it, don't abort the batch.
         log.warning("could not read archive %s: %s", Path(path).name, e)
+        _note(skipped_out, Path(path).name, f"archive unreadable: {e}")
         return out
 
     if encrypted:
         # Surfaced at WARNING because it is actionable: the analyst holds the password.
         log.warning("archive %s: %d member(s) are password-protected and were skipped",
                     Path(path).name, encrypted)
+        _note(skipped_out, Path(path).name,
+              f"{encrypted} member(s) password-protected — analyst holds the password",
+              count=encrypted)
 
     for inner in nested:
         sub = dest / f"{inner.stem}__nested"
         out.extend(extract_archive(str(inner), sub, max_total_bytes=max_total_bytes,
-                                   max_depth=max_depth, _depth=_depth + 1, _budget=_budget))
+                                   max_depth=max_depth, _depth=_depth + 1, _budget=_budget,
+                                   skipped_out=skipped_out))
     return out

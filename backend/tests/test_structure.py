@@ -126,6 +126,45 @@ def test_recovery_of_an_empty_grid_is_empty():
     assert not structure.needs_recovery([])
 
 
+def test_an_opening_balance_in_the_header_row_is_read_as_a_value():
+    """`40.00Cr` must not look like a column label.
+
+    A real statement prints the opening balance in the balance column of the header row.
+    Classing that row as a label merged the value into the column name (`Balance 40.00Cr`),
+    which then lost the header-detection contest to a repeated page header further down and
+    cost 11 records carrying 10 transactions.
+    """
+    assert structure._looks_like_data(["", "", "", "", "", "", "40.00Cr"])
+    assert structure._looks_like_data(["", "1,234.00Dr"])
+    # the row carrying the bare opening balance must NOT be absorbed into the header block
+    assert not structure._is_label_row(["", "", "", "", "", "", "40.00Cr"])
+    # a genuine header row is still a label row
+    assert structure._is_label_row(["Trans Date", "Value Date", "Debit", "Credit", "Balance"])
+
+
+def test_recovered_regions_keep_every_row_when_the_header_is_already_known():
+    """`_parsed_from_grid` must not re-detect a header the caller already resolved.
+
+    Geometry recovery hands over `[headers] + rows`. Re-detecting on that grid discarded
+    every row above whatever `_find_header_row` chose instead — 11 rows on a real statement,
+    because a repeated page header scored more alias hits than the true one.
+    """
+    from backend.app.ingestion.service import _parsed_from_grid
+
+    headers = ["Trans Date and Time", "Value Date", "Transaction Details",
+               "Ref/Cheque No", "Debit", "Credit", "Balance 40.00Cr"]
+    rows = [[f"0{i}-06-2024 10:0{i%10}:00", f"0{i}-06-2024", f"Trf/40641582661{i}",
+             f"40641582661{i}", "", "1,000.00", "5,000.00"] for i in range(1, 12)]
+    # a repeated page header sitting inside the data, with MORE alias hits than row 0
+    rows.insert(5, ["Trans Date and Time", "Value Date", "Transaction Details",
+                    "Ref/Cheque No", "Debit", "Credit", "Balance"])
+
+    pf = _parsed_from_grid("x.pdf", "pdf", [headers] + rows, [], header_idx=0)
+    assert len(pf.records) == len(rows), (
+        f"expected all {len(rows)} rows, kept {len(pf.records)}")
+    assert pf.headers[0] == "Trans Date and Time"
+
+
 def test_document_preamble_is_above_the_first_REGION_not_the_first_span():
     """The account block sits above the table and identifies the whole document. Losing it
     cost every one of 8,534 rows on a real Bank of Maharashtra statement — `_norm_bank`
