@@ -262,6 +262,27 @@ export type DataQualityResponse = {
   parsed_files: Record<string, unknown>[];
 };
 
+/** FR-18. `matrix[i][j]` is the weight of `columns[j]` on `entities[i]`, as a percentage.
+ *  `entities_scored` vs `entities_with_a_fired_rule` lets the UI distinguish "nothing fired"
+ *  from "nothing was evaluated" — an empty grid must not read as "assessed and clean". */
+export type RiskHeatmap = {
+  dataset: string;
+  window_minutes: number;
+  columns: string[];
+  entities: {
+    entity_id: string | null;
+    label: string | null;
+    risk_score: number;
+    band: string;
+    rules_fired: string[];
+  }[];
+  matrix: number[][];
+  unit: string;
+  rules_evaluated: string[];
+  entities_scored: number;
+  entities_with_a_fired_rule: number;
+};
+
 /**
  * A candidate same-actor pair surfaced for analyst review (C3).
  * Never auto-merged — deterministic resolution stays authoritative.
@@ -412,6 +433,11 @@ export const api = {
   graph(dataset: string, window = 10) {
     const q = new URLSearchParams({ window: String(window) });
     return request<GraphPayload>(`/v1/graph/${encodeURIComponent(dataset)}?${q}`);
+  },
+
+  riskHeatmap(dataset: string, window = 10, top = 20) {
+    const q = new URLSearchParams({ window: String(window), top: String(top) });
+    return request<RiskHeatmap>(`/v1/risk-heatmap/${encodeURIComponent(dataset)}?${q}`);
   },
 
   dataQuality(dataset: string, window = 10) {

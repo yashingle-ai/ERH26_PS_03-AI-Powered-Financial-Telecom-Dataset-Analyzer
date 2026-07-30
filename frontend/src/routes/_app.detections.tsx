@@ -11,6 +11,7 @@ import { useEntities } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
 import { mapDetections } from "@/lib/mappers";
 import { riskBand } from "@/lib/constants";
+import { RiskHeatmap } from "@/components/risk-heatmap";
 
 export const Route = createFileRoute("/_app/detections")({
   head: () => ({ meta: [{ title: "Detections & risk — ERakshak" }] }),
@@ -85,6 +86,15 @@ function DetectionsPage() {
           </div>
         ))}
       </div>
+
+      {/* FR-18 — which typologies drive each risky entity. Previously Streamlit-only. */}
+      <section className="mb-6 rounded-lg border border-border bg-surface/40 p-4">
+        <h2 className="mb-1 text-sm font-semibold">Risk heat map — entities × typologies</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Rule weight per entity. A dot means the typology did not fire on that entity.
+        </p>
+        <RiskHeatmap top={20} />
+      </section>
 
       <div className="space-y-3">
         {list.length === 0 && (

@@ -52,3 +52,15 @@ export function useGraph(dataset?: string | null) {
     staleTime: 60_000,
   });
 }
+
+/** FR-18 risk heat map: entities x typologies. */
+export function useRiskHeatmap(dataset?: string | null, top = 20) {
+  const { dataset: active, windowMinutes } = useInvestigation();
+  const ds = dataset ?? active;
+  return useQuery({
+    queryKey: ["risk-heatmap", ds, windowMinutes, top],
+    queryFn: () => api.riskHeatmap(ds!, windowMinutes, top),
+    enabled: Boolean(ds),
+    staleTime: 60_000,
+  });
+}

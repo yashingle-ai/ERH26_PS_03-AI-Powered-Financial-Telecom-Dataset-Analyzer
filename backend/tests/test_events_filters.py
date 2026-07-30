@@ -7,12 +7,30 @@ other, and an analyst working from the UI could not answer it at all.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 import pytest
 
 from backend.app.api.main import _event_location, _parse_bound, _within
 from backend.app.normalization import normalizers as nz
+
+
+@pytest.fixture(scope="module")
+def client():
+    os.environ["ERAKSHAK_JWT_SECRET"] = "test-secret"
+    os.environ["ERAKSHAK_ADMIN_PASSWORD"] = "adminpass"
+    from fastapi.testclient import TestClient
+
+    from backend.app.api.main import app
+    return TestClient(app)
+
+
+@pytest.fixture(scope="module")
+def auth_headers(client):
+    tok = client.post("/v1/auth/token",
+                      data={"username": "admin", "password": "adminpass"}).json()
+    return {"Authorization": f"Bearer {tok['access_token']}"}
 
 # ── location: tower location OR cell id ───────────────────────────────────────────
 
@@ -79,3 +97,34 @@ def test_open_ended_bounds_work_in_both_directions():
     assert _within(ts, None, _ist(2024, 5, 31))
     assert _within(ts, None, None)
     assert not _within(ts, _ist(2024, 6, 1), None)
+
+
+# ── FR-18 risk heat map ───────────────────────────────────────────────────────────
+
+def test_risk_heatmap_matrix_lines_up_with_its_axes(client, auth_headers):
+    """The heat map was Streamlit-only, so the React app could not show which typologies
+    drive each risky entity. The matrix must be rectangular and aligned to both axes, or
+    the UI silently mislabels which rule fired on whom."""
+    r = client.get("/v1/risk-heatmap/demo", headers=auth_headers, params={"top": 5})
+    assert r.status_code == 200
+    d = r.json()
+
+    assert len(d["matrix"]) == len(d["entities"]) <= 5
+    assert all(len(row) == len(d["columns"]) for row in d["matrix"])
+    # every column is a rule that actually fired somewhere
+    assert set(d["columns"]) <= set(d["rules_evaluated"])
+    # entities are ordered by descending risk score
+    scores = [e["risk_score"] for e in d["entities"]]
+    assert scores == sorted(scores, reverse=True)
+    # a listed entity must have at least one non-zero cell — an all-zero row would read as
+    # "assessed and clean" when it means the entity should not have been included
+    assert all(any(v > 0 for v in row) for row in d["matrix"])
+
+
+def test_risk_heatmap_reports_coverage_so_an_empty_grid_is_not_ambiguous(client, auth_headers):
+    """`entities_scored` vs `entities_with_a_fired_rule` is what lets a caller tell
+    "nothing fired" from "nothing was evaluated" — the same distinction the reject report
+    draws for rows."""
+    d = client.get("/v1/risk-heatmap/demo", headers=auth_headers).json()
+    assert d["entities_scored"] >= d["entities_with_a_fired_rule"] >= len(d["entities"])
+    assert d["unit"]

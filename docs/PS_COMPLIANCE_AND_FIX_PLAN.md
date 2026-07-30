@@ -37,14 +37,19 @@ so.
 | 15 | Filter / search (entity, amount, time, location) | 🟢 **works** | all four on **both** paths: the DSL via `/v1/query`, and `/v1/events` directly (`entity`, `location`, `min_amount`/`max_amount`, `start`/`end`) as of 30 Jul. `location` matches tower location or cell id on both, so they answer the same question |
 | 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
 | 17 | STR generation (bonus) | 🟡 reachable, content unreviewed | ships inside the report; the STR section itself has not been read against a real case |
-| 18 | Risk heat maps (bonus) | 🟡 Streamlit only | `dashboard/app.py:331` renders entities × typologies as a plotly Heatmap; **no API endpoint, absent from React** |
+| 18 | Risk heat maps (bonus) | 🟢 **works** | `GET /v1/risk-heatmap/{ds}` returns the entities × typologies matrix; rendered on the React **Detections** page as an accessible table, plus the original Streamlit view. Verified on `demo`: 6 typologies × 5 entities, matrix aligned to both axes, ordered by risk score |
 | 19 | Natural-language query (bonus) | 🟢 works | Gemini 6/6 planned; offline fallback; plain-text answers |
 
-**9 green · 9 amber · 1 red** (was 8 / 7 / 4 at the start of the fix work, 9 / 8 / 2 on 28 Jul).
+**10 green · 8 amber · 1 red** (was 8 / 7 / 4 at the start of the fix work, 9 / 8 / 2 on
+28 Jul).
 
-Remaining red: FR-9 only. FR-3 moved off red on 30 Jul — see §7. It is amber rather than
-green because the gain came from a source nobody had opened, not from fixing the TRAI IPDR
-parser, which still rejects 11 of 18 rows.
+Moved to green on 30 Jul: **FR-3** (every IPDR file present parses with zero row rejects —
+the "11 of 18" figure was stale, F6), **FR-15** (all four filters now on `/v1/events`, not
+only the DSL, F7), **FR-18** (heat map exposed over HTTP and rendered in React, F5).
+
+Remaining red: **FR-9 only**, and it is blocked on evidence rather than code — STRONG is 0 at
+every window from 1 to 60 minutes, so no threshold or parser change reaches it. The narrowest
+unblock is five KYC rows from the case officer; see §7.6.
 
 ---
 
@@ -62,7 +67,7 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 | F8 | Blank layout rows recorded under their own reason | 5 | 🟢 **DONE** `f9fb19e` — correct, but **not the win it was billed as**; see the correction below |
 | F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🔵 **IN PROGRESS** — measuring real amount distribution vs the gates |
 | F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** — now off zero (1 entity), see below |
-| F5 | Risk heat map in the API + React | 18 | **OPEN** — exists in Streamlit; unreachable from the primary UI, same shape as F3 was |
+| F5 | Risk heat map in the API + React | 18 | 🟢 **DONE** 30 Jul — `GET /v1/risk-heatmap/{ds}` returns the entities × typologies matrix; React renders it on the Detections page as an accessible table (no new charting dependency). Empty state distinguishes "no typology fired" from "nothing evaluated" via `entities_scored` vs `entities_with_a_fired_rule` |
 | F6 | IPDR row rejects (11 of 18) | 3 | 🟢 **DONE — the figure was stale.** Re-measured 30 Jul: the TRAI files parse **21/21 and 54/54 rows with zero rejects**, `ipdr_iprange` 7/7. The one remaining unrecognised IPDR-named file is `IPDR - Common IMEI Report.xlsx`, which is a report rather than session data and is handled by its own path (`er_common_imei`, 10 IMEI↔PHONE links). Closed by the timestamp and value-typing work, not by a targeted fix |
 | F7 | Location filter on `/v1/events` | 15 | 🟢 **DONE** 30 Jul — all four FR-15 filters added: `entity`, `location`, `min_amount`/`max_amount`, `start`/`end`. `location` matches tower location **or** cell id, the same two fields the DSL reads, so the endpoint and `/v1/query` cannot disagree about one event. Naive time bounds are read as IST, not UTC — otherwise a `start=2024-05-15` would shift the window 5.5 h. Verified on `smoke`: 547 → 121 by type, 299 by `min_amount`, 242 by `max_amount`, 0 by `end`; a malformed bound narrows nothing instead of 500-ing |
 | — | FR-9 STRONG correlation | 9 | ⚫ **CLOSED — evidence gap, not a defect** |
@@ -380,6 +385,42 @@ needed a new profile; they needed to be opened and given a readable shape.
 `calls = 112,174` is identical across all five builds measured on this case, through geometry
 recovery, duplicate detection and the preamble fix. That invariance is the strongest evidence
 available that those changes are non-destructive on the telecom path.
+
+**Full pipeline, first ever run on this case** (30 Jul, W=10, 2,927 s):
+
+| Metric | Value |
+|---|---|
+| files | 1,555 |
+| events | 456,431 |
+| transactions | 344,055 |
+| calls | 112,174 |
+| ip_sessions | 202 |
+| entities | 5,362 |
+| transfers | 64,812 |
+| **high_risk_entities** | **2** |
+| **top_risk_score** | **85.1** |
+| risk bands | high 2 · medium 41 · low 5,420 |
+| correlation STRONG / MEDIUM | **0 / 0** |
+| entities with account **and** phone | **4** |
+| entities with CALL + IP | 3 |
+| entities with CALL + TXN | 1 |
+| `ACCOUNT_NO` identifiers | 3,762 |
+| `UPI_ID` identifiers | 152,816 |
+
+**This vindicates leaving the scoring untouched.** F1's premise was that
+`high_risk_entities = 0` on `fir-65-2024` might mean the FATF gates were mis-calibrated. This
+case produces **2 high-risk entities and a top score of 85.1 with the identical, unrescaled
+scoring**. So the gates work; `fir-65-2024` simply has no entity exhibiting enough
+typologies. Had the bands been renormalised to force a non-zero count there, this case would
+now be inflated and its two genuine highs diluted.
+
+**MEDIUM = 0 despite 344,055 transactions**, and only 1 entity holds both a call and a
+transaction — so no call/transfer pair falls inside a 10-minute window. Same binding
+constraint as `fir-65-2024`: the account↔phone bridge, not the window.
+
+Internal consistency check: the ingestion-only run measured 344,047 transactions and this
+full run 344,055, a difference of **+8** — exactly the gain the `header_idx` fix produced on
+`_Doc_202404201542344604122.pdf` (115 → 123 events), which landed between the two runs.
 
 ### 7.4 Root causes fixed, with attribution
 

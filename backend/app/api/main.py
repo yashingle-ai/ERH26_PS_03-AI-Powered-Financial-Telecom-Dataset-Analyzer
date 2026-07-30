@@ -573,6 +573,53 @@ def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: 
     }
 
 
+@v1.get("/risk-heatmap/{ds}")
+def risk_heatmap(ds: str, window: int = 10, top: int = Query(20, ge=1, le=200),
+                 user=Depends(require_role("analyst"))):
+    """FR-18: entities x typologies, as a matrix the caller can render.
+
+    The heat map existed only inside `dashboard/app.py`, so the React app — the primary UI —
+    could not show which typologies drive each risky entity. Same shape as the Streamlit
+    version so the two agree: rows are the top entities by risk score, columns are the rules
+    that actually fired on them, and each cell is that rule's weight.
+
+    Entities with no fired rule are excluded rather than drawn as an empty row, because a
+    blank row reads as "assessed and clean" when it means "nothing fired". `rules_evaluated`
+    is returned alongside so a caller can tell an empty matrix (nothing fired anywhere) from
+    a missing one, which is the same distinction the reject report draws for rows.
+    """
+    inv = _analyze(ds, window)
+    ranked = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])
+    rows = [r for r in ranked if r.get("rule_flags")][:top]
+    columns = sorted({f["rule"] for r in rows for f in r["rule_flags"]})
+
+    matrix, entities_out = [], []
+    for r in rows:
+        weights = {f["rule"]: f["weight"] for f in r["rule_flags"]}
+        matrix.append([round(float(weights.get(rule, 0.0)) * 100, 1) for rule in columns])
+        eid = r.get("entity_id")
+        entities_out.append({
+            "entity_id": eid,
+            "label": r.get("label"),
+            "risk_score": r.get("risk_score"),
+            "band": r.get("band"),
+            "rules_fired": sorted(weights),
+        })
+
+    all_rules = sorted({f["rule"] for r in inv.risk.values() for f in (r.get("rule_flags") or [])})
+    return {
+        "dataset": ds,
+        "window_minutes": window,
+        "columns": columns,
+        "entities": entities_out,
+        "matrix": matrix,
+        "unit": "rule weight x 100",
+        "rules_evaluated": all_rules,
+        "entities_scored": len(inv.risk),
+        "entities_with_a_fired_rule": sum(1 for r in inv.risk.values() if r.get("rule_flags")),
+    }
+
+
 @v1.get("/graph/{ds}")
 def graph(ds: str, window: int = 10, user=Depends(require_role("analyst"))):
     return _analyze(ds, window).graph["payload"]
