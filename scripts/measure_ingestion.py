@@ -38,6 +38,48 @@ def _rows(reject: dict) -> int:
     return reject.get("rejected", reject.get("rows", 0))
 
 
+#: Extensions that cannot hold a table by nature — counted, but not work to be scheduled.
+_NON_TABULAR = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".webp", ".emz",
+    ".avi", ".mp4", ".mov", ".mkv", ".wmv", ".mp3", ".wav", ".m4a", ".amr", ".opus",
+    ".lnk", ".ini", ".ds_store", ".url", ".exe", ".dll", ".ttf", ".otf", ".css", ".js",
+    ".vcf",
+}
+_CONTAINERS = {".msg", ".eml", ".pst", ".ost", ".onetoc2", ".emmx", ".db", ".sqlite3",
+               ".zip", ".7z", ".rar", ".gz", ".tar", ".xml"}
+#: Document formats that could hold a table and for which there is no reader. This is the
+#: only bucket that represents parser work. `.json` is deliberately absent: it needs no
+#: reader research, so a JSON export carrying evidence would be a profile addition rather
+#: than a capability gap — and in this corpus the only ones are ground-truth fixtures.
+_MAYBE_TABULAR = {".doc", ".odt", ".ods", ".rpt", ".rtf", ".dbf", ".dat", ".prn"}
+
+
+def skip_category(entry: dict) -> str:
+    """Bucket one skipped-file entry.
+
+    Reporting "2,571 files never opened" as a single number points effort at fifty times
+    more work than exists — on `FIR-0006-2025 U`, 90% of that figure is photographs and
+    voice notes. The only actionable bucket is files that could hold a table but have no
+    reader. Archive-level losses are their own bucket because the fix is a budget or a
+    password, not a parser.
+    """
+    reason = entry.get("reason", "")
+    if entry.get("container") and ("archive" in reason or "member" in reason):
+        return "archive-level loss (budget / password / unreadable)"
+    if "scanned PDF" in reason:
+        return "scanned PDF, needs OCR"
+    if "PDF parsing disabled" in reason:
+        return "PDF parsing disabled for this run"
+    ext = os.path.splitext(entry.get("file", "").rstrip())[1].lower()
+    if ext in _NON_TABULAR:
+        return "non-tabular (image / media / system)"
+    if ext in _CONTAINERS:
+        return "container (contents walked separately)"
+    if ext in _MAYBE_TABULAR:
+        return "POTENTIALLY TABULAR - no reader (actionable)"
+    return "unknown / other"
+
+
 def measure(input_dir: str, include_pdf: bool = True) -> dict:
     t0 = time.time()
     skipped: list[dict] = []
@@ -85,6 +127,13 @@ def measure(input_dir: str, include_pdf: bool = True) -> dict:
         "files_never_opened": sum(1 for r in skipped if r.get("file_skipped")
                                   and not r.get("duplicate_of")),
         "duplicate_exhibits": sum(1 for r in skipped if r.get("duplicate_of")),
+        # Authoritative breakdown: derived from the walker's own skip list, so it cannot
+        # drift from `files_never_opened` the way a separate filesystem census did.
+        "never_opened_by_category": dict(Counter(
+            skip_category(r) for r in skipped
+            if r.get("file_skipped") and not r.get("duplicate_of")).most_common()),
+        "archive_members_unextracted": sum(r.get("members_unextracted", 0) or 0
+                                           for r in skipped),
         "rejected_rows_by_reason": dict(by_reason.most_common()),
         "seconds": {"parse": parse_seconds, "normalize": normalize_seconds},
     }

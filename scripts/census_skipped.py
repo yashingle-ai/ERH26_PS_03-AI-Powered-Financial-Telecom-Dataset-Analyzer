@@ -1,10 +1,21 @@
-"""Break `files_never_opened` into actionable vs not, without re-parsing anything.
+"""FAST PRE-FLIGHT estimate of what a case folder contains, without parsing anything.
+
+**For authoritative figures use `python -m scripts.measure_ingestion`**, which reports
+`never_opened_by_category` from the walker's own skip list. This script is an approximation
+and will not agree with it exactly, by design:
+
+  * it reads ZIP listings one level deep, while the walker recurses three levels — on
+    `FIR 65-2024` there are 96 nested `.zip` members it never sees;
+  * it ignores the 512 MB expansion budget, so on `FIR-0006-2025 U` it counts members of
+    `WhatsApp Chat - Bhai.zip` (1,079 MB) that the walker never extracts.
+
+Measured, those two effects put this census at 380 / 2,191 against the pipeline's 467 /
+1,788 — in opposite directions. Keep it for a sub-minute answer before committing to a
+45-minute parse; do not quote it as the coverage figure.
 
 A bare "1,788 files never opened" reads as 1,788 unread evidence tables. It is not: most
 are photographs and Outlook containers. The only actionable bucket is files that could
-plausibly hold a table but have no reader. Mirrors `_walk`'s decision (extension present in
-detector.FORMAT_BY_EXT) and looks inside ZIPs via namelist(), so archive members are counted
-the same way the pipeline counts them.
+plausibly hold a table but have no reader.
 
 Usage: python -m scripts.census_skipped "datasets/FIR 65-2024" "datasets/FIR-0006-2025 U"
 """

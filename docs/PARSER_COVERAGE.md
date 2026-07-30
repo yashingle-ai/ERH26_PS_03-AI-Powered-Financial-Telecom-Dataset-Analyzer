@@ -86,12 +86,28 @@ refused rather than by parser failures:
 Archives are expanded up to `max_archive_depth = 3` levels with a shared
 `max_archive_mb = 512` uncompressed budget. On FIR-0006 one archive
 (`WhatsApp Chat - Bhai.zip`, 1,079 MB) exceeds that budget on its own, so extraction stops
-early inside it. **That truncation is logged but does not reach the reject report**, so it is
-invisible in `/v1/data-quality`. Open issue — by the project's rule 2 it should be a reject
-entry, not just a log line.
+early inside it — **534 members unextracted**, and the member that exhausted the budget is
+`00002545-Vivek Aadhar card.pdf`, so the loss was dropping identity documents.
+
+Every archive-level loss now produces a reject entry rather than a log line: budget
+exhaustion, depth refusals, path-escape refusals, unreadable members and encrypted members.
+`archive_members_unextracted` totals them. The 512 MB cap is a zip-bomb guard and is
+deliberately unchanged — it is now visible enough for an analyst to decide.
 
 Password-protected members are skipped and counted: 32 members across 8 archives on
 FIR 65-2024.
+
+### 1.5 Which coverage figure is authoritative
+
+Two tools answered the same question and disagreed — 467 / 1,788 from the pipeline against
+380 / 2,191 from the filesystem census. Both directions are explained: the walker recurses
+three archive levels where the census reads one, and the census ignores the expansion budget
+the walker enforces.
+
+Resolved by making one authoritative. `measure_ingestion` reports
+`never_opened_by_category` derived from the walker's own skip list, so the breakdown cannot
+drift from `files_never_opened`. `census_skipped.py` is retained as a sub-minute pre-flight
+estimate with both limitations stated in its docstring, and is not the coverage figure.
 
 ---
 
@@ -237,13 +253,40 @@ Switchable with `ERAKSHAK_VALUE_TYPING=0`.
 
 | # | Item | Size | Blocked on |
 |---|---|---|---|
-| 1 | Legacy `.doc` reader | **42 files** | No clean pure-Python reader on Windows; `sniff_container` already detects OLE2 |
-| 2 | `.rpt` / `.odt` | 5 files | Low value |
-| 3 | WhatsApp `_chat.txt` | 5,148 rows | **Design decision** — no `MESSAGE` event type; mapping to `CALL` would put false call records into evidence |
-| 4 | Residual broken-geometry PDFs | part of 9,792 rows on FIR-0006 | Further structure work |
-| 5 | Archive budget truncation not in reject report | 1 archive, 1,079 MB | Rule-2 violation, small fix |
-| 6 | `_Doc_202404201542344604122.pdf` loses 10 of 125 events | 10 events | **Unexplained** — recorded as such rather than assumed benign |
-| 7 | Scanned/OCR PDFs | unknown | Out of scope by design (Doc 03) |
+| 1 | WhatsApp `_chat.txt` | 5,148 rows | **Design decision** — no `MESSAGE` event type; mapping to `CALL` would put false call records into evidence |
+| 2 | Residual broken-geometry PDFs | part of 9,792 rows on FIR-0006 | Further structure work |
+| 3 | Legacy `.doc` reader | **40 files, low value** | Verified by magic bytes: all 40 are genuine OLE2, none mislabelled. Contents are narrative police paperwork — case diaries, I4C correspondence, press notes, look-out notices, remand reports. No financial tables, so the same class the pipeline already skips for narrative PDFs |
+| 4 | `.rpt` / `.odt` | 5 files | Low value |
+| 5 | Scanned/OCR PDFs | ~14 over-cap PDFs + ~258 scans | **Closed, low priority** — see §3.1 |
+
+Two former backlog items are closed rather than deferred:
+
+- **`_Doc_202404201542344604122.pdf` losing 10 events** — root-caused to `_parsed_from_grid`
+  re-detecting a header the caller already knew, and to `_merge_header` absorbing an opening
+  balance into the header (`Balance 40.00Cr`) so a repeated page header outscored it. Records
+  156 → 167, events 115 → 123. The residual 2 are duplicates that recovery now collapses
+  correctly, proven by diffing the event sets: nothing appears in one arm and not the other.
+- **Archive truncation invisible** — every archive-level loss now produces a reject entry.
+
+### 3.1 OCR — closed with evidence, not deferred
+
+Tested on one representative image-only document (`Alamin Jeweller AOF with KYC.pdf`, a
+Punjab National Bank KYC declaration) with `rapidocr-onnxruntime` at 500 DPI:
+
+| Field | Truth | OCR | Result |
+|---|---|---|---|
+| Phone | `8420367092` | `8420367032` | 9/10 digits |
+| Aadhaar | 12 digits | letters-for-digits | unusable |
+| PAN | present | absent | ✗ |
+| Name / address / PIN | present | fragments or absent | ✗ |
+| Printed labels | — | exact, 0.92 | ✓ |
+
+**0 of 7 fields exactly correct.** The decisive point is verifiability: none of the three
+identifiers on that form appear anywhere else in the case data, so a 1-digit error cannot be
+caught. For a merge key, 9 of 10 digits is not 90% useful — `8420367032` is a different real
+person, and the link would be undetectably wrong. Revisiting needs handwriting-capable OCR
+(HTR, not printed-text OCR), a human confirmation step, and a PII policy for Aadhaar/PAN
+first.
 
 **Not backlog — correctly refused:**
 
