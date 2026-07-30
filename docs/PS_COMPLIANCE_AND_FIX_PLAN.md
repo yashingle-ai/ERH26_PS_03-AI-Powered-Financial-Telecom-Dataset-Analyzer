@@ -22,7 +22,7 @@ so.
 |---|---|---|---|
 | 1 | Parse bank statements (Excel/PDF/CSV) | 🟡 works, lossy | **140** BANK tables → **39,170 txns** (was 122 / 36,281). Fixed-width print statements and broken-geometry portal PDFs now read |
 | 2 | Parse CDR | 🟢 works | 91 tables → **203,050 calls**; 24% rejects are mostly true duplicates. `calls` invariant across five builds on `FIR-0006-2025 U` (112,174) — see §7.3 |
-| 3 | Parse IPDR | 🟡 no longer barely | **59** IPDR tables → **4,133 sessions** (was 12 / 69). The gain is Google legal-process HTML, not the TRAI files — those still reject 11 of 18 rows (F6 open) |
+| 3 | Parse IPDR | 🟢 **works** | **59** IPDR tables → **4,133 sessions** (was 12 / 69). Every IPDR file present now parses with **zero row rejects** — TRAI 21/21 and 54/54, iprange 7/7 (F6 closed 30 Jul). `FIR-0006-2025 U` carries no telecom IPDR at all; its 202 sessions are all Google legal-process HTML, which is a property of that case rather than a parser gap |
 | 4 | Schema mapping / auto-detection | 🟡 improving | **658 of 951 unrecognised** (was 712 of 939). Rows stranded in unrecognised tables **23,846 → 16,307**; 101 tables claimed on values, all flagged for review |
 | 5 | Row-level reject diagnostics | 🟢 works | **118,836** rows itemised (was 139,534), split **42,761 non-evidentiary / 76,075 unmapped**; plus **467 files never opened** and **21 duplicate exhibits**, both previously invisible |
 | 6 | Unified entity model | 🟡 partial | **6,681** entities (was 4,182); **ACCOUNT_NO+PHONE = 3** (was 1). 25,695 counting external counterparty singletons — the two figures are not interchangeable, see §7.7 |
@@ -34,7 +34,7 @@ so.
 | 12 | Risk scores | 🟡 same cause as FR-11 | demo 3 high / 11 med / 75 low; real **0 high** |
 | 13 | Mule-account signatures | 🟡 same cause as FR-11 | fires on `demo` only |
 | 14 | Money-flow + comms graphs, drill-down | 🟢 works | 8,435 nodes on real data, HTTP 200 |
-| 15 | Filter / search (entity, amount, time, location) | 🟡 partial | all four supported by the DSL (`Field_.LOCATION`, `CELL_ID`; CDR profiles map both) via `/v1/query`. `/v1/events` still filters only by `event_type` |
+| 15 | Filter / search (entity, amount, time, location) | 🟢 **works** | all four on **both** paths: the DSL via `/v1/query`, and `/v1/events` directly (`entity`, `location`, `min_amount`/`max_amount`, `start`/`end`) as of 30 Jul. `location` matches tower location or cell id on both, so they answer the same question |
 | 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
 | 17 | STR generation (bonus) | 🟡 reachable, content unreviewed | ships inside the report; the STR section itself has not been read against a real case |
 | 18 | Risk heat maps (bonus) | 🟡 Streamlit only | `dashboard/app.py:331` renders entities × typologies as a plotly Heatmap; **no API endpoint, absent from React** |
@@ -63,8 +63,8 @@ Ordered by how much each unblocks, not by effort. Status updated as work lands.
 | F1 | Calibrate detection thresholds + eligibility report | 11, 12, 13 | 🔵 **IN PROGRESS** — measuring real amount distribution vs the gates |
 | F4b | Account↔phone bridge from complaint tables | 6, 10, 9 | **OPEN** — now off zero (1 entity), see below |
 | F5 | Risk heat map in the API + React | 18 | **OPEN** — exists in Streamlit; unreachable from the primary UI, same shape as F3 was |
-| F6 | IPDR row rejects (11 of 18) | 3 | **OPEN** |
-| F7 | Location filter on `/v1/events` | 15 | **OPEN** — the DSL path already covers location; only the direct listing endpoint lacks it |
+| F6 | IPDR row rejects (11 of 18) | 3 | 🟢 **DONE — the figure was stale.** Re-measured 30 Jul: the TRAI files parse **21/21 and 54/54 rows with zero rejects**, `ipdr_iprange` 7/7. The one remaining unrecognised IPDR-named file is `IPDR - Common IMEI Report.xlsx`, which is a report rather than session data and is handled by its own path (`er_common_imei`, 10 IMEI↔PHONE links). Closed by the timestamp and value-typing work, not by a targeted fix |
+| F7 | Location filter on `/v1/events` | 15 | 🟢 **DONE** 30 Jul — all four FR-15 filters added: `entity`, `location`, `min_amount`/`max_amount`, `start`/`end`. `location` matches tower location **or** cell id, the same two fields the DSL reads, so the endpoint and `/v1/query` cannot disagree about one event. Naive time bounds are read as IST, not UTC — otherwise a `start=2024-05-15` would shift the window 5.5 h. Verified on `smoke`: 547 → 121 by type, 299 by `min_amount`, 242 by `max_amount`, 0 by `end`; a malformed bound narrows nothing instead of 500-ing |
 | — | FR-9 STRONG correlation | 9 | ⚫ **CLOSED — evidence gap, not a defect** |
 
 ### Cumulative effect of the fixes above — `fir-65-2024`, W=10

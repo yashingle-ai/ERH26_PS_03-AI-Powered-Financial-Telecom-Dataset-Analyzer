@@ -479,9 +479,62 @@ def entities(ds: str, window: int = 10, limit: int = Query(50, le=500), offset: 
     return {"total": len(rows), "items": items}
 
 
+def _parse_bound(value: str | None) -> datetime | None:
+    """Parse a time bound, returning None when absent or unparseable.
+
+    Timezone-naive input is read as the canonical case timezone rather than UTC: every
+    event has already been normalised to IST, so treating `start=2024-05-15` as UTC would
+    silently shift the window by 5.5 hours.
+    """
+    if not value:
+        return None
+    try:
+        from dateutil import parser as dtparser
+
+        from ..normalization import normalizers as nz
+        parsed = dtparser.parse(value, dayfirst=True)
+    except (ValueError, OverflowError, TypeError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=nz.CANONICAL_TZ)
+
+
+def _within(ts, lo: datetime | None, hi: datetime | None) -> bool:
+    if not isinstance(ts, datetime):
+        return False
+    if lo and ts < lo:
+        return False
+    return not (hi and ts > hi)
+
+
+def _event_location(ev: dict) -> str:
+    """Location text for an event — tower location and cell id, same fields the DSL reads.
+
+    `Field_.LOCATION` maps to `attributes.location` and `Field_.CELL_ID` to
+    `attributes.cell_id`, so matching on both here keeps this endpoint and `/v1/query`
+    answering the same question. A CDR that only carries a cell id is still located.
+    """
+    attrs = ev.get("attributes") or {}
+    return " ".join(str(attrs.get(k) or "") for k in ("location", "cell_id")).strip()
+
+
 @v1.get("/events/{ds}")
 def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: int = 0,
-           event_type: str | None = None, user=Depends(require_role("analyst"))):
+           event_type: str | None = None,
+           entity: str | None = None,
+           location: str | None = None,
+           min_amount: float | None = None,
+           max_amount: float | None = None,
+           start: str | None = None,
+           end: str | None = None,
+           user=Depends(require_role("analyst"))):
+    """Chronological event listing with the four FR-15 filters.
+
+    Entity, amount, time and location were reachable only through the `/v1/query` DSL; this
+    endpoint filtered by `event_type` alone, so the primary listing could not answer the
+    requirement its own DSL already covered. `location` matches tower location OR cell id,
+    and `entity` matches the entity id or its label, because an analyst reading the UI has
+    the label and not the internal id.
+    """
     inv = _analyze(ds, window)
     # Event timestamps are timezone-aware (normalization canonicalises every source),
     # so the fallback must be aware too — sorting an aware datetime against a naive
@@ -495,6 +548,24 @@ def events(ds: str, window: int = 10, limit: int = Query(200, le=2000), offset: 
     if event_type:
         want = event_type.upper()
         rows = [e for e in rows if (e.get("event_type") or "").upper() == want]
+    if entity:
+        needle = entity.strip().lower()
+        rows = [e for e in rows
+                if needle == (e.get("entity_id") or "").lower()
+                or needle == (e.get("counterparty_entity_id") or "").lower()
+                or needle in str((inv.entities.get(e.get("entity_id")) or {})
+                                 .get("label") or "").lower()]
+    if location:
+        needle = location.strip().lower()
+        rows = [e for e in rows if needle in _event_location(e).lower()]
+    if min_amount is not None:
+        rows = [e for e in rows if (e.get("amount") or 0) >= min_amount]
+    if max_amount is not None:
+        rows = [e for e in rows if (e.get("amount") or 0) <= max_amount]
+    if start or end:
+        lo = _parse_bound(start)
+        hi = _parse_bound(end)
+        rows = [e for e in rows if _within(e.get("timestamp_start"), lo, hi)]
     page = rows[offset: offset + limit]
     return {
         "total": len(rows),
