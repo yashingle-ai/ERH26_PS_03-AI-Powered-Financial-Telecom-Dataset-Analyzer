@@ -266,18 +266,76 @@ def _label(data, eid):
     return str((data["entities"].get(eid, {}) or {}).get("label", eid))
 
 
+#: Grounds and basis clauses printed per entry before summarising the rest. Both were
+#: silently truncated at 5 and 3, so an entity with more typologies lost the extras with no
+#: indication — the one thing rule 2 forbids, in the document most likely to be relied on.
+_STR_MAX_GROUNDS = 5
+_STR_MAX_BASIS = 3
+
+
+def _str_subject(data, row) -> str:
+    """Identify the subject by typed identifier, not just a label.
+
+    `label` on real data is a bare account number or phone, so "Suspected subject:
+    50100369668648" leaves the reader guessing what kind of identifier that is. An STR has
+    to name the account it concerns.
+    """
+    eid = row.get("entity_id")
+    ent = (data.get("entities") or {}).get(eid) or {}
+    ids = ent.get("identifiers") or set()
+    typed = sorted({f"{t}:{v}" for (t, v) in ids
+                    if t in ("ACCOUNT_NO", "PHONE", "UPI_ID", "IMEI", "IMSI")})
+    shown = ", ".join(typed[:4])
+    if len(typed) > 4:
+        shown += f" (+{len(typed) - 4} more)"
+    label = row.get("label") or eid or "unidentified"
+    return f"{label} [{shown}]" if shown else str(label)
+
+
 def _str_lines(data) -> list[str]:
-    """F2: FIU-IND-style STR narrative lines (one suspected subject per entry)."""
+    """FIU-IND-style STR narrative lines, one suspected subject per entry.
+
+    This is a **draft for analyst review**, and the wording says so rather than asserting a
+    filing decision. The recommended action is graded by band: a high-band entity is put
+    forward for filing, a medium-band one for review. Recommending a freeze on an
+    automatically-scored medium entity — the previous behaviour, which fired down to a score
+    of 48.6 — is an action against a real account holder that a rules engine should not be
+    proposing on its own.
+    """
     lines = []
     n = 0
     for r in _top_entities(data, 10):
-        if r["band"] in ("high", "medium") and r["rule_flags"]:
-            n += 1
-            reasons = "; ".join(f["rule"].replace("_", " ") for f in r["rule_flags"][:5])
-            details = "; ".join(f["detail"] for f in r["rule_flags"][:3])
-            lines.append(
-                f"STR-{n:03d} | Suspected subject: {r['label']} | Risk {r['risk_score']} "
-                f"({r['band']}) | Grounds of suspicion: {reasons} | Basis: {details} | "
-                f"Recommended action: file STR with FIU-IND; freeze/monitor per SOP."
-            )
-    return lines or ["No suspicious entities above threshold; no STR recommended."]
+        if r["band"] not in ("high", "medium") or not r["rule_flags"]:
+            continue
+        n += 1
+        flags = r["rule_flags"]
+        grounds = "; ".join(f["rule"].replace("_", " ") for f in flags[:_STR_MAX_GROUNDS])
+        if len(flags) > _STR_MAX_GROUNDS:
+            grounds += f" (+{len(flags) - _STR_MAX_GROUNDS} further typolog" \
+                       f"{'y' if len(flags) - _STR_MAX_GROUNDS == 1 else 'ies'})"
+        basis = "; ".join(f["detail"] for f in flags[:_STR_MAX_BASIS])
+        if len(flags) > _STR_MAX_BASIS:
+            basis += f" (+{len(flags) - _STR_MAX_BASIS} further ground" \
+                     f"{'' if len(flags) - _STR_MAX_BASIS == 1 else 's'} on file)"
+
+        feats = r.get("features") or {}
+        txns = int(feats.get("txn_count") or 0)
+        particulars = (
+            f"{txns} transaction(s), credits {feats.get('total_in') or 0:,.0f} / "
+            f"debits {feats.get('total_out') or 0:,.0f}" if txns else
+            "no transactions attributed to this subject as account holder"
+        )
+        action = ("put forward for STR filing with FIU-IND, subject to analyst confirmation"
+                  if r["band"] == "high" else
+                  "flagged for analyst review; below the band this tool puts forward for "
+                  "filing")
+        lines.append(
+            f"STR-{n:03d} | Suspected subject: {_str_subject(data, r)} | "
+            f"Risk {r['risk_score']} ({r['band']}) | Grounds of suspicion: {grounds} | "
+            f"Basis: {basis} | Particulars: {particulars} | Recommended action: {action}."
+        )
+    if not lines:
+        return ["No entity reached the high or medium risk band with a fired typology, so no "
+                "STR is drafted. This states that nothing matched — not that nothing was "
+                "assessed; see the detection section for rules evaluated."]
+    return lines
