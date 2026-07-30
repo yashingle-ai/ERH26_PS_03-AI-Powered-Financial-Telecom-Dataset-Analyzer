@@ -502,17 +502,35 @@ def parse_file_multi(path: str) -> list[ParsedFile]:
 
 
 def _parse_one(p: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
-               origin: str | None = None) -> None:
+               origin: str | None = None, skipped: list[dict] | None = None) -> None:
     """Parse a single file into `out`. `origin` names the archive it came from, if any."""
     if p.suffix.lower() == ".pdf":
         # PDFs in real cases are mostly narrative/scanned (slow, no structured
         # tables). Opt-in, and skip huge ones even when enabled.
         if not include_pdf:
+            if skipped is not None:
+                _record_skip(skipped, p, container=origin,
+                             reason="file not opened: PDF parsing disabled for this run")
             return
+        size_mb = p.stat().st_size / 1e6
         if p.stat().st_size > pdf_cap:
-            log.info("skipping large PDF (%.1fMB > %.0fMB cap): %s",
-                     p.stat().st_size / 1e6, config.max_pdf_mb(), p.name)
-            return
+            # Decide on content, not size. Both outcomes are recorded either way: an
+            # over-cap PDF used to vanish behind a log line, which is 34 files and 292 MB
+            # across the two cases — including `CA-3779 KYC FORM.pdf` and a 284-page bank
+            # statement whose transactions were being discarded on file size alone.
+            if pdf_has_text_layer(str(p)):
+                log.info("over-cap PDF has a text layer, parsing anyway "
+                         "(%.1fMB > %.0fMB cap): %s", size_mb, config.max_pdf_mb(), p.name)
+            else:
+                log.info("skipping scanned PDF, no text layer (%.1fMB > %.0fMB cap): %s",
+                         size_mb, config.max_pdf_mb(), p.name)
+                if skipped is not None:
+                    _record_skip(
+                        skipped, p, container=origin,
+                        reason=f"file not opened: scanned PDF, no text layer "
+                               f"({size_mb:.1f}MB over the {config.max_pdf_mb():.0f}MB "
+                               f"cap) — needs OCR")
+                return
     try:
         parsed = parse_file_multi(str(p))
     except Exception as e:  # per-file failure never aborts the batch (Doc 04)
@@ -576,7 +594,36 @@ _KNOWN_UNREADABLE = {
 }
 
 
-def _record_skip(skipped: list[dict], path: Path, container: str | None = None) -> None:
+#: Pages probed when deciding whether an over-cap PDF is scanned or has a text layer.
+_PDF_TEXT_PROBE_PAGES = 2
+
+
+def pdf_has_text_layer(path: str, pages: int = _PDF_TEXT_PROBE_PAGES) -> bool:
+    """True when the first few pages yield extractable text.
+
+    The size cap exists because large PDFs in real cases are usually scanned narrative that
+    yields nothing. Size is a proxy for that, and it is a poor one: measured across the 15
+    distinct over-cap PDFs in the two case folders, 14 are scans with zero extractable text
+    — but one is a 284-page bank statement with 446,732 characters of text, 502 IFSC codes
+    and real transactions, and it was being discarded on file size alone.
+
+    Probing is cheap enough to replace the guess: 0.01-0.07s for a scan, 0.56s for the
+    284-page statement. Uses pdfplumber, already a declared dependency, rather than adding
+    PyMuPDF for this.
+    """
+    try:
+        with pdf.pdfplumber.open(path) as doc:
+            limit = min(pages, len(doc.pages))
+            for i in range(limit):
+                if (doc.pages[i].extract_text() or "").strip():
+                    return True
+    except Exception as exc:                      # noqa: BLE001 - unreadable == no text
+        log.debug("text-layer probe failed for %s: %s", Path(path).name, exc)
+    return False
+
+
+def _record_skip(skipped: list[dict], path: Path, container: str | None = None,
+                 reason: str | None = None) -> None:
     """Record a file the walker never opened.
 
     `_walk` only parses extensions in FORMAT_BY_EXT and previously dropped everything
@@ -589,7 +636,9 @@ def _record_skip(skipped: list[dict], path: Path, container: str | None = None) 
     skipped.append({
         "file": f"{container} → {path.name}" if container else path.name,
         "container": container,
-        "reason": f"file not opened: {_KNOWN_UNREADABLE.get(ext, f'unsupported type {ext or chr(40)+chr(41)}')}",
+        "reason": reason or (
+            f"file not opened: "
+            f"{_KNOWN_UNREADABLE.get(ext, f'unsupported type {ext or chr(40)+chr(41)}')}"),
         "rows": 0,
         "rejected": 0,
         "file_skipped": True,
@@ -638,7 +687,8 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
                 max_depth=config.max_archive_depth(),
             ):
                 if member.suffix.lower() in detector.FORMAT_BY_EXT:
-                    _parse_one(member, out, pdf_cap, include_pdf, origin=p.name)
+                    _parse_one(member, out, pdf_cap, include_pdf, origin=p.name,
+                               skipped=skipped)
                 else:
                     _record_skip(skipped, member, container=p.name)
             continue
@@ -654,6 +704,6 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
                 continue
             if key is not None:
                 seen[key] = p.name
-            _parse_one(p, out, pdf_cap, include_pdf)
+            _parse_one(p, out, pdf_cap, include_pdf, skipped=skipped)
         else:
             _record_skip(skipped, p)
