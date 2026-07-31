@@ -13,6 +13,7 @@ import networkx as nx
 
 from ..core import config
 from ..core.logging_config import get_logger
+from . import features as featmod
 
 log = get_logger(__name__)
 
@@ -23,32 +24,66 @@ def _enabled(cfg, name):
 
 
 def structuring(feats, cfg):
+    """Credits clustered just below the reporting threshold, WITHIN `window_hours`.
+
+    `window_hours` was declared in the config and never read: the timestamp was discarded at
+    `for (_t, a, asset) in f["credits"]` and every in-band credit in the case counted, however
+    far apart. Three ₹9.5-lakh receipts years apart are not smurfing — they are a business that
+    deals in large sums. Structuring is a *deliberate split of one sum*, so the burst is the
+    signal and the window is what makes it a burst.
+
+    Concentrated the check on the window rather than deleting the key, because the key names
+    the right idea: FATF's smurfing typology is about evading a per-report threshold, which is
+    assessed per reporting period.
+    """
     r = _enabled(cfg, "structuring")
     if not r:
         return []
     thr = r["reporting_threshold_inr"]
     lo = thr * (1 - r["just_below_band_pct"])
+    window = timedelta(hours=r.get("window_hours", 24))
+    need = r["min_occurrences"]
     flags = []
     for eid, f in feats.items():
         # A3: the reporting threshold is an INR fiat limit — only count INR credits.
-        near = [a for (_t, a, asset) in f["credits"] if asset == "INR" and lo <= a < thr]
-        if len(near) >= r["min_occurrences"]:
+        near = sorted(t for (t, a, asset) in f["credits"]
+                      if asset == "INR" and t is not None and lo <= a < thr)
+        if len(near) < need:
+            continue
+        best, j = 0, 0
+        for i in range(len(near)):
+            while near[i] - near[j] > window:
+                j += 1
+            best = max(best, i - j + 1)
+        if best >= need:
             flags.append({"entity_id": eid, "rule": "structuring", "weight": r["weight"],
-                          "detail": f"{len(near)} credits in [{lo:.0f}, {thr:.0f}) "
-                                    f"(just below reporting threshold)"})
+                          "detail": f"{best} credits in [{lo:.0f}, {thr:.0f}) within "
+                                    f"{r.get('window_hours', 24)}h "
+                                    f"(just below reporting threshold; "
+                                    f"{len(near)} in the band overall)"})
     return flags
 
 
 def rapid_in_out(feats, cfg):
+    """Money credited then forwarded out within this rule's OWN configured hold window.
+
+    `f["max_rapid_forward"]` is a single precomputed scalar and cannot serve two rules that
+    configure different windows — `rapid_in_out` asks for 60 minutes, `mule_account` for 120.
+    It was computed once at 120 while this rule's flag text printed `max_hold_minutes` (60), so
+    every flag stated a window that had not been measured. Measuring per rule costs one pass
+    over an entity's own credits and debits and makes the detail true.
+    """
     r = _enabled(cfg, "rapid_in_out")
     if not r:
         return []
+    hold = r.get("max_hold_minutes", featmod.ML_HOLD_MINUTES)
     flags = []
     for eid, f in feats.items():
-        if f["max_rapid_forward"] >= r["min_forwarded_pct"]:
+        forwarded = featmod.max_rapid_forward(f["credits"], f["debits"], hold)
+        if forwarded >= r["min_forwarded_pct"]:
             flags.append({"entity_id": eid, "rule": "rapid_in_out", "weight": r["weight"],
-                          "detail": f"{f['max_rapid_forward']*100:.0f}% of a credit forwarded "
-                                    f"within {r['max_hold_minutes']}min"})
+                          "detail": f"{forwarded*100:.0f}% of a credit forwarded "
+                                    f"within {hold}min"})
     return flags
 
 
@@ -56,9 +91,13 @@ def mule_account(feats, cfg):
     r = _enabled(cfg, "mule_account")
     if not r:
         return []
+    hold = r.get("max_hold_minutes", featmod.ML_HOLD_MINUTES)
     flags = []
     for eid, f in feats.items():
-        if f["fan_in"] >= r["min_fan_in"] and f["max_rapid_forward"] >= r["min_forwarded_pct"]:
+        if f["fan_in"] < r["min_fan_in"]:
+            continue                       # cheap half first; the fan-in gate rejects most
+        forwarded = featmod.max_rapid_forward(f["credits"], f["debits"], hold)
+        if forwarded >= r["min_forwarded_pct"]:
             # Say when the evidence is counterparty-side. A flag on an account whose own
             # statement we hold and one inferred from someone else's transfers are different
             # strengths of finding, and an analyst has to be able to tell them apart.
@@ -66,8 +105,8 @@ def mule_account(feats, cfg):
                      "not in the case)" if f.get("from_transfers_only") else "")
             flags.append({"entity_id": eid, "rule": "mule_account", "weight": r["weight"],
                           "detail": f"fan-in={f['fan_in']} with "
-                                    f"{f['max_rapid_forward']*100:.0f}% rapid forwarding"
-                                    f"{basis}"})
+                                    f"{forwarded*100:.0f}% rapid forwarding within "
+                                    f"{hold}min{basis}"})
     return flags
 
 

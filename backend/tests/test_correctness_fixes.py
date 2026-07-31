@@ -29,17 +29,27 @@ def test_a2_dedup_drops_identical_events():
 
 
 def test_a3_structuring_ignores_crypto_amounts():
+    """Timestamps are real here because `structuring` now honours its `window_hours`.
+
+    They used to be `None`, which no production credit ever is — `timestamp_start` is required
+    of every event and the transfer-derived fill skips a transfer with no time. The rule needs
+    them to tell a burst from three receipts years apart, so the fixture has to carry them.
+    """
     from backend.app.core import config
     from backend.app.detection import rules
+    ist = timezone(timedelta(hours=5, minutes=30))
+    t0 = datetime(2024, 8, 1, 9, 0, tzinfo=ist)
     cfg = config.scoring_rules()
     thr = cfg["rules"]["structuring"]["reporting_threshold_inr"]
     just_below = thr * 0.95
     # 5 crypto credits just below the INR threshold must NOT trigger structuring
-    feats = {"E1": {"credits": [(None, just_below, "CRYPTO:USDT")] * 5}}
+    feats = {"E1": {"credits": [(t0 + timedelta(hours=i), just_below, "CRYPTO:USDT")
+                               for i in range(5)]}}
     flags = rules.structuring(feats, cfg)
     assert flags == []
-    feats2 = {"E2": {"credits": [(None, just_below, "INR")] * 5}}
-    assert rules.structuring(feats2, cfg)   # INR does trigger
+    feats2 = {"E2": {"credits": [(t0 + timedelta(hours=i), just_below, "INR")
+                                for i in range(5)]}}
+    assert rules.structuring(feats2, cfg)   # INR within the window does trigger
 
 
 def test_nl_query_amount_and_risk():

@@ -115,7 +115,7 @@ def build(events: list[dict], transfers: list[dict], correlation_hits: list[dict
         f["n_imeis"] = len(f["distinct_imeis"])
         f["night_ratio"] = f["night_events"] / f["total_events"] if f["total_events"] else 0.0
         f["inout_ratio"] = (f["total_out"] / f["total_in"]) if f["total_in"] else 0.0
-        f["max_rapid_forward"] = _max_rapid_forward(f["credits"], f["debits"])
+        f["max_rapid_forward"] = max_rapid_forward(f["credits"], f["debits"], ML_HOLD_MINUTES)
         f["max_calls_hour"] = _max_in_window(f["call_times"], 60)
         f["max_dormancy_days"] = _max_gap_days(f["txn_times"])
     return feats
@@ -144,8 +144,21 @@ def _max_gap_days(times: list) -> float:
     return max((ts[i] - ts[i - 1]).total_seconds() for i in range(1, len(ts))) / 86400.0
 
 
-def _max_rapid_forward(credits, debits, hold_minutes: int = 120) -> float:
+#: Hold window for the `max_rapid_forward` ML feature, which is one scalar per entity and
+#: therefore cannot serve two rules that configure different windows. `rapid_in_out` asks for
+#: 60 minutes and `mule_account` for 120; each now computes its own from its own config, and
+#: this constant is only the ML vector's. Keeping it at 120 preserves the value the forest has
+#: always been fitted on, so changing the rules does not silently re-fit the model.
+ML_HOLD_MINUTES = 120
+
+
+def max_rapid_forward(credits, debits, hold_minutes: int = ML_HOLD_MINUTES) -> float:
     """Largest fraction of a credit forwarded out within the hold window.
+
+    Public because the rules must each pass their OWN configured window. This was called once
+    with the default while `rapid_in_out` printed `max_hold_minutes` (60) in its flag text — so
+    a forensic report asserted "forwarded within 60min" about a measurement that had allowed
+    120. The rule now measures the window it names.
 
     A3: computed within the same asset only — you can't 'forward' an INR credit as a
     crypto debit, and mixing the two produces meaningless ratios.

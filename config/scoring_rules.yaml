@@ -44,8 +44,15 @@ rules:
 
   call_transfer_coincidence:
     enabled: true
-    # The signature fusion pattern: call + online(IP) + transfer within window
-    window_minutes: 10                      # mirrors correlation.default_window_minutes
+    # The signature fusion pattern: call + online(IP) + transfer within window.
+    #
+    # There is deliberately NO window_minutes here. One was declared, described as mirroring
+    # correlation.default_window_minutes, and never read by anything — this rule counts hits
+    # the correlation stage has already produced, so the window was applied upstream and
+    # editing it here changed nothing. A tunable that silently does nothing is worse than an
+    # absent one: it invites an analyst to widen the window in the wrong file and conclude the
+    # evidence is not there. The real setting is `correlation.default_window_minutes` in
+    # settings.yaml, overridable per request via ?window=.
     weight: 0.15
     # A MEDIUM hit is the same call+transfer pair with NO corroborating IP session, so it is
     # weaker evidence and is not scored as a STRONG one.

@@ -178,23 +178,81 @@ gained transfer-derived flows. That mechanism is pinned by
 the case holds records for — so the conclusion that withdrew F1's calibration half survives
 unchanged. This case has **0** MEDIUM hits, so D1 and D2 cannot reach it at all.
 
-**The unpredicted result: `structuring` fired 9 → 23.** All 14 additions are counterparty
-entities that received **three or more INR credits in [₹9L, ₹10L)** — the just-below-reporting-
-threshold signature, observed from the payer's side. Twelve had no risk row at all before. These
-are the accounts money was structured *into*, and they are exactly the kind of subject the
-counterparty fix was built to reach — `mule_account` was simply the wrong rule to expect it from.
-Each carries `ml_scored = false` and a rules-only score, which is the honest presentation: real
-evidence about the money, no behavioural profile of the account holder.
+**The unpredicted result: `structuring` fired 9 → 23** — and **10 of those 14 additions were
+wrong**, which only became visible when the rule was made to honour its own window. See §6.6.
+The corrected figure is **13 fired: the original 9, plus 4 counterparty accounts** that received
+three or more INR credits in [₹9L, ₹10L) *inside 24 hours*.
+
+Those 4 are the accounts money was structured *into*, reached from the payer's side — the kind of
+subject the counterparty fix was built for, and `mule_account` was the wrong rule to expect it
+from. Each carries `ml_scored = false` and a rules-only score, which is the honest presentation:
+real evidence about the money, no behavioural profile of the account holder.
+
+**What this cost, stated plainly.** The 14 was written up as a win before the rule it depended on
+had been checked. It was inflated 3.5× by a defect that predated this work, and the correction
+came from reading the config against the code rather than from any test. A new finding must be
+validated against the rule that produced it, not just against the run that produced it.
 
 Two entities change band, **both at the boundary**: E00007 39.9 → 40.0 and E00021 39.7 → 40.6,
 on ML shifts of 0.004 and 0.029 — 0.1 and 0.9 risk points. Their rule sets are identical in both
 arms. That is a statement about how brittle a hard band edge is for an entity already sitting on
-it, not about this change. Worst ML shift anywhere on this case is 0.159 → **4.8 risk points**,
-against the 12.4 the unfixed D3 was causing.
+it, not about this change. Worst ML shift anywhere on this case is 0.159, i.e. **4.8 risk
+points**.
 
-The `structuring` result also corrects something in §6.1's framing: the counterparty fix was
-justified there on `mule_account` eligibility alone, which turned out to be the *least* of what
-it did. Its real yield was 14 structuring subjects on live evidence.
+That 4.8 is **not** comparable to the 12.4 in §6.2: 12.4 was measured on `demo`, and quoting the
+two side by side reads as a before/after on one case when it is two numbers from two datasets.
+The like-for-like statement is that on this case the fit population is **unchanged at 5,363** in
+both arms, so none of the 4.8 comes from the D3 mechanism §6.2 describes — it comes from observed
+entities holding no transactions of their own gaining transfer-derived flows, which changes their
+own vectors and therefore the fit.
+
+The `structuring` result still corrects §6.1's framing — the counterparty fix was justified there
+on `mule_account` eligibility, which turned out not to be where its value was — but the yield is
+**4 structuring subjects on live evidence, not 14**.
+
+### 6.6 Three thresholds declared in config and not honoured 🔴→🟢
+
+Found by auditing every key in `config/scoring_rules.yaml` against the code that should read it,
+prompted by asking whether the 14 structuring hits above were real. They were not, and the reason
+predated all of this work.
+
+| Key | What it did | What it does now |
+|---|---|---|
+| `structuring.window_hours: 24` | **Never read.** The timestamp was discarded at `for (_t, a, asset) in f["credits"]`, so *every* in-band credit in the case counted however far apart — three ₹9.5-lakh receipts years apart read as smurfing | Sliding window; the flag names the burst count *and* the wider in-band total, so the broader context is not lost |
+| `rapid_in_out.max_hold_minutes: 60` | Read **only to build the flag text**. The measurement came from one precomputed scalar fixed at 120, so every flag asserted "forwarded within 60min" about a computation that had allowed 120 | Each rule computes its own window. `mule_account` keeps 120, `rapid_in_out` gets the 60 it asks for |
+| `call_transfer_coincidence.window_minutes: 10` | Read by **nothing**. The window is applied upstream in correlation, so editing it here changed nothing | Removed, with the reason and the real setting recorded in its place |
+
+The middle one is the worst of the three and the only one that was wrong *on the page*: a forensic
+report is a document someone relies on, and it was stating a window that had not been measured.
+Structuring merely over-fired; `rapid_in_out` made a false assertion about its own evidence.
+
+Measured effect:
+
+| | `demo` | `FIR-0006-2025 U` | `fir-65-2024` |
+|---|---|---|---|
+| `structuring` fired | 3 → **3**, precision **1.000**, recall **1.000** | 23 → **13** | 0 → **0** (nothing in the band) |
+| `rapid_in_out` fired | 28 → **23**, precision 0.107 → **0.130**, recall **1.000** | 58 → **58** | 21 → **21** |
+| entities whose rule set changed | 5 | 10 | **0** |
+| high / top score | 3 high | 2 high, 85.5 | 0 high, 54.2 — **all unchanged** |
+
+On `demo` this is strictly better: `structuring` keeps all three planted scenarios with **zero**
+false positives, and narrowing `rapid_in_out` to the 60 minutes it advertises removes **five**
+false positives while keeping all three true ones. Overall scenario recall stays **15/15**.
+
+On `FIR-0006-2025 U` the 10 dropped `structuring` flags were **all** counterparty-derived, and
+**all 9 firings that predate the counterparty fix survive untouched** — so the window fix removed
+exactly the artefacts the fill had introduced and nothing that was already there. `rapid_in_out`
+loses nothing, because real UPI/IMPS forwarding on this case is already well inside 60 minutes.
+
+On `fir-65-2024` **nothing moves at all** — not one entity's rule set, band, or score. `structuring`
+was already 0 eligible there (no transaction anywhere in [₹9L, ₹10L); the case maximum is ₹70L),
+and every `rapid_in_out` forward was already inside 60 minutes. A correctness fix that changes
+nothing on one of two real cases is the expected shape when the defect needed a specific data
+pattern to bite.
+
+`test_rule_windows.py` pins each window against a credit placed just inside and just outside it,
+and closes the class of defect with a test that reads the YAML and fails if **any** declared
+threshold is not referenced by the rule that declares it.
 
 ### 6.4 Eligibility was an entity count wearing a diagnosis
 
