@@ -25,6 +25,7 @@ from .graph import service as graph_service
 from .ingestion import service as ingestion
 from .normalization import service as normalization
 from .normalization import validation
+from .search import document_mentions as doc_mentions
 
 log = get_logger(__name__)
 
@@ -45,6 +46,9 @@ class Investigation:
     #: Per-rule audit trail (FR-11/12). Separates "found nothing" from "could not run",
     #: which is the difference between a clean case and an inert detector.
     rule_eligibility: list = field(default_factory=list)
+    #: Which narrative document mentions which identifier (FR-15 over the case paperwork).
+    #: Pointers into the evidence, NOT merge keys — see `search.document_mentions`.
+    document_mentions: list = field(default_factory=list)
     graph: dict = field(default_factory=dict)
     data_quality: list = field(default_factory=list)
 
@@ -135,6 +139,15 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
         link_events += er_bank_reply.load_bank_reply_links(input_dir)
     inv.entities, inv.node_to_entity = er.resolve(inv.events + link_events)
     er.assign_entities(inv.events, inv.node_to_entity, inv.entities)
+
+    # The investigation's own narrative — affidavits, charge sheets, panchnamas — indexed by the
+    # identifiers it names. 36 of these documents carry their evidence in prose only, so a table
+    # reader cannot see them at all; and none of it can be events, because an affidavit has no
+    # per-identifier timestamp. It answers "which documents mention this account", which is the
+    # question asked when a number surfaces and the narrative behind it is what's wanted.
+    mention_skips: list[dict] = []
+    inv.document_mentions = doc_mentions.build(input_dir, skipped_out=mention_skips)
+    inv.rejects += mention_skips
 
     inv.timeline = timeline_builder.build(inv.events)
     inv.transfers = money_flow.build_transfers(inv.events)

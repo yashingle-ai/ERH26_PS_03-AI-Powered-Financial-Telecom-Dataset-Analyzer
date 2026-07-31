@@ -47,6 +47,7 @@ from backend.app.core.logging_config import audit, get_logger, setup_logging
 from backend.app.detection import service as detection
 from backend.app.ingestion import detector
 from backend.app.reporting import service as reporting
+from backend.app.search import document_mentions as doc_mentions
 
 setup_logging()
 log = get_logger(__name__)
@@ -602,6 +603,49 @@ def rule_eligibility(ds: str, window: int = 10, user=Depends(require_role("analy
         "rules_enabled_but_inert": sum(
             1 for r in rows
             if r.get("enabled") and not r.get("fired") and (r.get("eligible") or 0) == 0),
+    }
+
+
+@v1.get("/document-mentions/{ds}")
+def document_mentions(ds: str, identifier: str | None = None,
+                      kind: str | None = None,
+                      limit: int = Query(100, ge=1, le=1000), offset: int = 0,
+                      user=Depends(require_role("analyst"))):
+    """FR-15 over the case paperwork: which narrative document names which identifier.
+
+    The affidavits, charge sheets and panchnamas are the investigation's own account of itself,
+    and 36 of them carry their evidence in prose only — invisible to a table reader whatever
+    the headers say. None of it can be events: an affidavit has no per-identifier timestamp.
+    What it answers is "which documents mention this account", which is what an analyst wants
+    the moment a number surfaces from the structured data.
+
+    `?identifier=` matches as a normalised identifier, not as a substring: a substring search
+    over a 16,000-character affidavit returns the document for any four-digit run it happens to
+    contain. A phone typed with spaces, with `+91`, or in Gujarati numerals finds the same
+    document as its bare ASCII form.
+
+    **These are pointers into the evidence, not identity claims.** A mention says only that the
+    document names the number. Identity comes from `bank_reply_links`, because a bank's KYC
+    reply is a different class of evidence from an officer's allegation in a legal filing.
+    `asserted_layers` is carried the same way — the officer's own layering determination,
+    attributed to the document, and never an input to the `layering` typology.
+    """
+    inv = _analyze(ds, 10)
+    rows = inv.document_mentions or []
+    if identifier:
+        rows = doc_mentions.find(rows, identifier)
+    if kind:
+        rows = [r for r in rows if kind in (r.get("kinds") or [])]
+    page = rows[offset: offset + limit]
+    return {
+        "dataset": ds,
+        "total": len(rows),
+        "documents_indexed": len(inv.document_mentions or []),
+        "prose_only_documents": sum(1 for r in (inv.document_mentions or [])
+                                    if r.get("prose_only")),
+        "kinds": sorted({k for r in (inv.document_mentions or [])
+                         for k in (r.get("kinds") or [])}),
+        "items": page,
     }
 
 

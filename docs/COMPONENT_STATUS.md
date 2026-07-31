@@ -286,6 +286,52 @@ Sizing note for (1): 36 prose-only documents plus 8 key-value forms is the whole
 documents. That is small enough to be worth doing well and too small to justify a general-purpose
 Gujarati NLP layer.
 
+### 4.3 Built: the narrative documents are now searchable 🟢
+
+`search/document_mentions.py`, `GET /v1/document-mentions/{ds}?identifier=&kind=`, on
+`Investigation.document_mentions`. Measured across both cases:
+
+| | `fir-65-2024` | `FIR-0006-2025 U` | combined |
+|---|---|---|---|
+| documents indexed | 52 | 71 | **123** |
+| of which prose-only | 15 | 24 | **39** |
+| key-value forms read | 6 | 2 | **8** |
+| distinct ACCOUNT_NO | 120 | 362 | **469** |
+| distinct PHONE | 330 | 125 | **435** |
+| distinct IFSC | 54 | 229 | **280** |
+| distinct IMEI / IMSI | 20 / 1 | 0 / 1 | **20 / 1** |
+| UPI IDs | 0 | 11 | **11** |
+| asserted layer tags | FIRST 8, SECOND 9, THIRD 9, FOURTH 8 | FIRST 8, SECOND 14, THIRD 7 | — |
+
+The heaviest documents are the ones a table reader could never have used: an *office mobile phone
+analysis* naming 221 identifiers, an *arrest panchnama* naming 395, and a *bank accounts recovered
+from the handset* schedule naming 328.
+
+Two design constraints are enforced by test, because they are the whole point:
+
+- **Identifier matching, not substring.** `?identifier=2348` must not return every affidavit
+  containing that run inside a longer account number. The needle is normalised the way the index
+  was, so a phone with spaces, with `+91`, or in Gujarati numerals finds the same document.
+- **No merge keys.** A record carries no `own_identifiers`, no `primary`, no `event_type` — the
+  three things entity resolution consumes. A mention says *this document names this number*.
+  Identity comes from §4.1 alone. The `(SECOND LAYER)` tags are carried as `asserted_layers`
+  attributed to the document and are never an input to the `layering` typology, which derives its
+  own hops from the transfer graph.
+
+Account extraction is **label-anchored** (`A/C`, `એકાઉન્ટ નં`, `ખાતા નં`). An unanchored 9–18 digit
+run in Gujarati prose is as likely to be a case number or a section citation as an account — the
+same reasoning that put AADHAAR behind keyword anchoring rather than a checksum.
+
+**Chain-of-custody finding: 47 exhibits were never delivered.** Every `.docx` the indexer cannot
+open — 47 across both cases — is **exactly 162 bytes**, each holding a length-prefixed source host
+name: `HP` (15), `ACER` (13), `pc` (8), `Admin` (6), `CYBER` (3), `admin` (2). Six different
+machines. They are shortcut / cloud-placeholder stubs; **the documents' bytes were never copied
+into the evidence set**, so no parser can recover them. They now reach the reject report saying so
+in those words, with a `content_never_delivered` flag — because "unreadable" invites someone to try
+a better parser, while "never delivered" is a request to the case officer for the missing exhibit.
+A genuinely corrupt file is still reported as corrupt; claiming the wrong one would send the
+officer hunting for a file we already hold.
+
 ## 5. Correlation
 
 | Component | Status | Evidence |
