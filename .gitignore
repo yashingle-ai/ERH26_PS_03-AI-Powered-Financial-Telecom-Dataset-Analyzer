@@ -72,3 +72,10 @@ frontend/dist/
 # identifiers — a complaint reference (complain_gujarat_09__2110624xxxxxxx) was found
 # hardcoded in one. Scratch that names evidence is evidence.
 artifacts/
+
+# Working notes derived from case evidence. `DECISIONS.md` carried live MSISDNs, IMEIs and
+# IMSIs from the FIR IPDR, which is exactly what rule 4 forbids in git. Untracked rather than
+# deleted: the notes are useful, they just must not be committed. Remove this entry only after
+# the identifiers in them have been redacted.
+docs/yash development/
+docs/gaps_in_current_system.MD
