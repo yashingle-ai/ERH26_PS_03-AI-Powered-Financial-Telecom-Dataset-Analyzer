@@ -2,6 +2,9 @@
 
 Implements `research/07_architecture_planning.md`. Modular monolith (Python) + Streamlit UI.
 
+> This is the module map. For each stage's **contract** — what it guarantees, the cross-stage
+> invariants, and why each parsing fallback exists — see `yash development/ARCHITECTURE.md`.
+
 ## Pipeline stages (backend/app/)
 
 ```

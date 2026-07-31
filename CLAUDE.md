@@ -30,11 +30,13 @@ code creates a merge, check officer contamination, cardinality, and what the col
 means. `has_admin_role_columns()` is the guard; `bank_reply_links.py` is the worked example.
 
 **4 — Real evidence never reaches git.** `datasets/` is deny-by-default in `.gitignore` *and*
-`.dockerignore`. This applies to docs written *about* the evidence too — `DECISIONS.md` was
-committed with live MSISDNs and IMEIs in it. Before committing anything under `docs/`:
+`.dockerignore`. This applies to docs written *about* the evidence too —
+`docs/yash development/DECISIONS.md` was committed with live MSISDNs and IMEIs in it. Before committing anything under `docs/`:
 
 ```bash
-grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" docs/**/*.md
+# [0-9] not \d — grep's \d is Unicode-aware too, so it flags the illustrative
+# Gujarati-digit example in these very docs. Same trap as the bug in §6.
+grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" docs/**/*.md CLAUDE.md
 ```
 
 **5 — Never redefine a headline metric. Add a field beside it.** `rejected_rows`,
@@ -113,7 +115,8 @@ that exhausted memory and killed a run with `MemoryError` in an unrelated functi
 
 ## 5. Already built. Do not rebuild.
 
-`GAPS.md` sent someone to build item 3.1 after it existed — check the 🟢 markers first.
+`docs/yash development/GAPS.md` sent someone to build item 3.1 after it existed — check the 🟢
+markers there first.
 
 - **Counterparty-side detection features** (`6f7751f`) — entities seen only as somebody else's
   payee now carry fan-in and money flows.
@@ -170,6 +173,10 @@ junction and deletes the real directory.
 5. Reject entries for any new skip path (rule 2).
 6. Update `docs/yash development/GAPS.md` — mark 🟢 what you finished, so the next agent does not
    rebuild it.
+
+Full package in `docs/yash development/`: `ARCHITECTURE.md` (stage contracts), `DATA_MODEL.md`
+(**read before writing code**), `RUNBOOK.md` (commands + failure modes), `API.md` (15 endpoints),
+`MEASUREMENT.md` (the A/B protocol and what was withdrawn), `TESTING.md`, `GAPS.md`, `DECISIONS.md`.
 
 Deeper reading: `docs/COMPONENT_STATUS.md` (component detail),
 `docs/PS_COMPLIANCE_AND_FIX_PLAN.md` (19 requirements, measured evidence),

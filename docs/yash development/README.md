@@ -19,6 +19,18 @@ Read in this order. Stop after step 3 if you only need to make a small change.
 |---|---|---|
 | 0 | **`../../CLAUDE.md`** | **if you are working through Claude or another agent, start here.** Claude Code loads it automatically every session: the five hard rules, the working method, what is already built, and the traps that each invite a specific wrong action. A human can skip to 1 |
 | 1 | **this file** | what the system is, how to run it, where everything lives |
+
+Then, in this folder, as you need them:
+
+| file | when |
+|---|---|
+| **`ARCHITECTURE.md`** | before changing any stage — each stage's contract and why each fallback exists |
+| **`DATA_MODEL.md`** | **before writing any code.** Exact Event / Entity / transfer / risk / reject shapes, dumped from a live run. Which identifiers are merge keys and which must never be |
+| **`RUNBOOK.md`** | every command, real timings, and the failure modes seen on this machine with their fixes |
+| **`API.md`** | all 15 endpoints verified, plus the four paths you will try that do not exist |
+| **`MEASUREMENT.md`** | the A/B protocol, every current figure with its provenance, and **the figures that were withdrawn** |
+| **`TESTING.md`** | conventions, the synthetic-fixture rule, and why the refusal tests matter more than the happy path |
+
 | 2 | **`DECISIONS.md`** (beside this) | every judgement call and its reasoning. Several look wrong until you know what was measured |
 | 3 | **`GAPS.md`** (beside this) | what is genuinely unfinished, sized and ranked |
 | 4 | `../COMPONENT_STATUS.md` | component-by-component detail, 772 lines. The reference, not the intro |
