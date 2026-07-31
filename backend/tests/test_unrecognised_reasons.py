@@ -136,3 +136,52 @@ def test_summarise_is_ordered_by_rows_so_the_biggest_reason_reads_first():
 
 def test_an_empty_input_summarises_to_nothing():
     assert un.summarise([]) == {}
+
+
+# ── the row-level reject reason must name WHICH precondition failed ──────────────────
+
+def test_a_row_with_no_timestamp_and_one_with_no_identifier_are_reported_apart():
+    """All three normalisers gate on a timestamp and then an identifier. Reported as one reason
+    that was 60,325 rows on `fir-65-2024` — 16.5% of everything parsed — with no way to tell the
+    unrecoverable half (reference data with no time) from the actionable half (a mapping gap)."""
+    from backend.app.ingestion.service import ParsedFile
+    from backend.app.normalization import service as norm
+
+    pf = ParsedFile(
+        path="cdr.csv", format="csv", source_type="CDR", profile_id="cdr_generic",
+        confidence=1.0, needs_manual_mapping=False,
+        headers=["Call Date", "A-Party"],
+        records=[
+            {"Call Date": "01/02/2024 10:00", "A-Party": "9876543210"},   # good
+            {"Call Date": "", "A-Party": "9876543210"},                   # no time
+            {"Call Date": "01/02/2024 11:00", "A-Party": ""},             # no identifier
+        ],
+    )
+    events, rejects = norm.normalize_parsed_files([pf])
+    reasons = {r["reason"]: r["rejected"] for r in rejects}
+    no_time = [v for k, v in reasons.items() if "no timestamp" in k]
+    no_id = [v for k, v in reasons.items() if "no mapped primary identifier" in k]
+    assert no_time == [1], f"expected one no-timestamp row, got {reasons}"
+    assert no_id == [1], f"expected one no-identifier row, got {reasons}"
+    assert len(events) == 1
+
+
+def test_the_two_reasons_still_sum_to_every_rejected_row():
+    """Rule 2 arithmetic: splitting a reason must not lose or double-count a row."""
+    from backend.app.ingestion.service import ParsedFile
+    from backend.app.normalization import service as norm
+
+    records = ([{"Call Date": "", "A-Party": "9876543210"}] * 4
+               + [{"Call Date": "01/02/2024 11:00", "A-Party": ""}] * 3
+               # distinct times: identical rows are removed by dedupe, which is a third reason
+               # and would muddle the arithmetic under test
+               + [{"Call Date": "01/02/2024 12:00", "A-Party": "9812345678"},
+                  {"Call Date": "01/02/2024 13:00", "A-Party": "9812345678"}])
+    pf = ParsedFile(path="c.csv", format="csv", source_type="CDR", profile_id="cdr_generic",
+                    confidence=1.0, needs_manual_mapping=False,
+                    headers=["Call Date", "A-Party"], records=records)
+    events, rejects = norm.normalize_parsed_files([pf])
+    assert len(events) == 2
+    split = sum(r["rejected"] for r in rejects
+                if "no timestamp" in r["reason"] or "no mapped primary identifier" in r["reason"])
+    assert split == 7, f"the two reasons must account for every gated row, got {rejects}"

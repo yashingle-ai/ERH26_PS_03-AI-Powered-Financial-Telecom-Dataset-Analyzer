@@ -377,21 +377,36 @@ def normalize_parsed_files(parsed_files: list) -> tuple[list[dict], list[dict]]:
         profile = profiles_by_id.get(pf.profile_id, {"narration_extract": {}})
         source_tz = profile.get("profile", {}).get("source_tz", "IST")
         fn = _NORMALIZERS[pf.source_type]
-        file_rejects = 0
+        no_time = no_identifier = 0
         for raw in pf.records:
             prov = {**raw.get("_provenance", {}), "profile": pf.profile_id}
             mapped = field_mapper.map_record(raw, profile, getattr(pf, "value_map", None))
             ev = (fn(mapped, pf.header_identity, profile, prov, source_tz)
                   if pf.source_type == "BANK" else fn(mapped, prov, source_tz))
             if ev is None:
-                file_rejects += 1
+                # WHICH precondition failed. All three normalisers gate on a timestamp and then on
+                # an identifier, and the two failures want opposite responses: a row with no
+                # timestamp can never become an event however well it is mapped — it is reference
+                # data — while a row that HAS a time and lost its identifier is a mapping gap worth
+                # closing. Reported as one reason this was 60,325 rows on `fir-65-2024`, 16.5% of
+                # everything parsed, with no way to tell which half was actionable.
+                #
+                # Recomputed here rather than returned from the normalisers, so their signatures
+                # and behaviour are untouched: this is a diagnosis of a decision already made.
+                if _event_time(mapped, source_tz) is None:
+                    no_time += 1
+                else:
+                    no_identifier += 1
             else:
                 events.append(ev)
-        if file_rejects:
-            rejects.append({"file": pf.path, "source_type": pf.source_type,
-                            "profile": pf.profile_id, "rows": len(pf.records),
-                            "rejected": file_rejects,
-                            "reason": "row missing timestamp / primary identifier"})
+        base = {"file": pf.path, "source_type": pf.source_type,
+                "profile": pf.profile_id, "rows": len(pf.records)}
+        if no_time:
+            rejects.append({**base, "rejected": no_time,
+                            "reason": "row has no timestamp — cannot become an event"})
+        if no_identifier:
+            rejects.append({**base, "rejected": no_identifier,
+                            "reason": "row has a timestamp but no mapped primary identifier"})
 
     upgraded = enrich_ipdr_prefix_phones(events)
     if upgraded:

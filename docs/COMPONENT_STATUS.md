@@ -246,6 +246,44 @@ with the links applied; anything claimed before that is a guess.
 that case carries no telecom IPDR at all, and its 202 IP sessions are all Google legal-process HTML.
 With almost no IP evidence, no merge can produce the third leg.
 
+### 4.1.2 FR-9, finally: absence, not attribution 🔴 closed as not-a-code-problem
+
+Two causes were still open for the missing IP leg, with opposite fixes — the sessions exist but do
+not reach the entity holding the calls (fixable in code), or they are correctly attributed to phones
+that have no CDR (only more evidence fixes it). Measured on `fir-65-2024`:
+
+| | |
+|---|---|
+| IP sessions carrying an MSISDN | **4,129 of 4,133 — 99.9%** |
+| sessions with no MSISDN | **4** |
+| distinct phones in the **IPDR** | **19** |
+| distinct phones in the **CDR** | **4,026** |
+| IPDR phones that also appear in the CDR | **8** |
+
+**Attribution is not the problem.** 99.9% of sessions reach an entity. The IPDR simply covers
+**19 phones out of 4,026 — 0.47% of the subscriber population**, and only 8 of those 19 overlap the
+CDR at all. No parser, profile, threshold or merge reaches that.
+
+The entity side is more encouraging than "0" suggested:
+
+| entities holding… | count |
+|---|---|
+| an IP session | 18 |
+| IP + call | 7 |
+| IP + transaction | 4 |
+| **all three — the STRONG precondition** | **3** |
+
+So three entities *do* hold all three event types. STRONG is 0 because in none of them do the three
+events fall within 60 minutes of each other. The precondition is reachable; the coincidence is not
+present in the evidence.
+
+**The actionable ask is now specific.** Not "five KYC rows" (tested, wrong ask) and not "more IPDR"
+in general, but: **IPDR for phones already in the CDR.** Only 8 of the 19 IPDR subscribers appear in
+the call records, so most of the IP evidence we hold describes handsets the case has no calls for.
+
+FR-9 stays 🔴 and should stay 🔴. It is not unfinished plumbing — every code-side hypothesis has now
+been built and measured, and each moved the number it should have moved without moving STRONG.
+
 This is FR-9, the flagship and the only remaining red, and a wrong merge here fabricates an identity
 link — rule 3 — in the requirement most likely to be relied on.
 
