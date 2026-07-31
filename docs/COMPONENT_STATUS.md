@@ -199,8 +199,43 @@ that case carries no telecom IPDR at all, and its 202 IP sessions are all Google
 With almost no IP evidence, no merge can produce the third leg.
 
 This is FR-9, the flagship and the only remaining red, and a wrong merge here fabricates an identity
-link — rule 3 — in the requirement most likely to be relied on. The checks pass, so the proposal is
-sound; it is recorded rather than implemented because the merge itself is the user's call.
+link — rule 3 — in the requirement most likely to be relied on.
+
+### 4.1.1 Built, measured — and it does **not** unblock FR-9 🔴
+
+`entity_resolution/bank_reply_links.py`, behind `ERAKSHAK_BANK_REPLY_LINKS` so both arms of the
+sweep run one build. On `fir-65-2024` it loads **35 links, 29 accounts, 33 phones, max fan-out
+2/2** — inside the `_MAX_FANOUT` guard of 4.
+
+Window sweep, flag as the only variable:
+
+| W | STRONG off | STRONG **on** | MEDIUM off | MEDIUM **on** |
+|---|---|---|---|---|
+| 1 | 0 | **0** | 0 | **2** |
+| 5 | 0 | **0** | 0 | **4** |
+| 10 | 0 | **0** | 2 | **6** |
+| 30 | 0 | **0** | 4 | **9** |
+| 60 | 0 | **0** | 6 | **11** |
+
+`account+phone` entities **2 → 30**. `high_risk` 0 in both arms; `top_risk` 54.2 → 54.3.
+
+**STRONG stays 0 at every window. The predicted "up to 4" realised as 0.** That was labelled an
+upper bound rather than a prediction when it was recorded, and it is worth being explicit that the
+bound was loose: holding all three event *types* turned out to say almost nothing about whether the
+three fall within 60 minutes of each other. In none of the 4 do they.
+
+**What the links did achieve, and it is not nothing.** MEDIUM nearly doubles, and for the first time
+fires at **W=1 and W=5** — a call and a transaction on the same entity within *one minute*, where
+previously nothing fired below W=10. That is the tightest temporal coincidence this case has
+produced, and `call_transfer_coincidence` now reaches the risk model on MEDIUM (§6.1), so these
+become visible findings rather than a statistic.
+
+**The diagnosis this corrects.** FR-9's recorded cause was *"the missing leg is the transaction, i.e.
+the account↔phone bridge"*. The bridge is now supplied, and the call+transaction coincidences duly
+appear — so **that was the wrong leg.** The blocker is the **IP session**: this case holds 4,133 IP
+sessions against 203,050 calls, about 2%, and only 7 entities hold a call and an IP session at all.
+The narrowest unblock for FR-9 is therefore **more IPDR coverage, not more KYC** — a materially
+different ask of the case officer than the one on record, and one no amount of parsing can satisfy.
 
 ### 4.2 The Gujarati police documents, explored as a class ⚪
 

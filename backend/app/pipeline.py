@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from .core.logging_config import get_logger
 from .correlation import timeline_builder, window_correlator
 from .detection import service as detection
+from .entity_resolution import bank_reply_links as er_bank_reply
 from .entity_resolution import common_imei as er_common_imei
 from .entity_resolution import mapping as er_mapping
 from .entity_resolution import service as er
@@ -125,6 +126,13 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
     link_events = er_mapping.load_link_events(input_dir)
     # LEA Common-IMEI reports in the case folder are the same kind of bridge, auto-discovered.
     link_events += er_common_imei.load_common_imei_links(input_dir, inv.events)
+    # Bank replies to legal process, tabulated in Gujarati in the police paperwork: the account
+    # beside the mobile registered against it. Same class of bridge again, and the one FR-9 has
+    # been waiting on — `account+phone` was 3. Gated on ERAKSHAK_BANK_REPLY_LINKS so both arms
+    # of the window sweep run the SAME build, which is the only way a moved STRONG count is
+    # attributable to the links rather than to anything else that changed.
+    if er_bank_reply.enabled():
+        link_events += er_bank_reply.load_bank_reply_links(input_dir)
     inv.entities, inv.node_to_entity = er.resolve(inv.events + link_events)
     er.assign_entities(inv.events, inv.node_to_entity, inv.entities)
 

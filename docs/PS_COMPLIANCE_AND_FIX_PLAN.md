@@ -28,7 +28,7 @@ so.
 | 6 | Unified entity model | 🟡 partial | **6,681** entities (was 4,182); **ACCOUNT_NO+PHONE = 3** (was 1). 25,695 counting external counterparty singletons — the two figures are not interchangeable, see §7.7 |
 | 7 | Timestamp normalisation | 🟢 works | IST canonical; time-only hazard closed 28 Jul |
 | 8 | Unified timeline | 🟢 works | per-entity, bisect-indexed |
-| 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0 | **0 at every window from 1 to 60 min** — not a calibration problem. MEDIUM 2 → 6 as W widens. **7 entities now hold CALL+IP** (was 6 with any IP at all); the missing leg is the transaction, i.e. the account↔phone bridge. The original "no IP evidence exists" proof covered only the IPDR files — see §7 |
+| 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0, **cause re-diagnosed 31 Jul** | **0 at every window from 1 to 60 min.** The account↔phone bridge was built and measured (`bank_reply_links`, 35 links from Gujarati bank KYC replies, `account+phone` 2 → 30) and **STRONG stayed 0** — so the missing leg is **not** the transaction, as previously recorded. MEDIUM nearly doubles (6 → 11 at W=60) and fires at **W=1 for the first time**, so call+transaction now coincide; the absent leg is the **IP session**. 4,133 IP sessions against 203,050 calls (~2%), only 7 entities holding call+IP at all. The narrowest unblock is **IPDR coverage, not KYC** — see COMPONENT_STATUS §4.1.1 |
 | 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,852 · BENEFICIARY 10,413 · PHONE 9,246 · IMEI 30 · IMSI 32 · **IP 18** (was 6) · **ACCOUNT_NO 3,022** (was 549) · **account↔phone 3** (was 1) |
 | 11 | Rules + ML detection | 🟡 **causes now settled** | All 8 rules fire on `demo`, scenario recall **15/15**. On `fir-65-2024` 6 of 8 fire (148 flags). Ten detection defects fixed 30–31 Jul — §8 — including one regression that had moved every observed entity's ML score by up to 12.4 points. `0 high-risk on real` is now explained per rule rather than open |
 | 12 | Risk scores | 🟡 **saturation instrumented** | demo 3 high / 14 med / 87 low. Enabled weights sum to **1.2** against a component capped at **1.0**, so 6 and 8 typologies can tie; `typologies_fired` / `rule_weight_raw` / `rule_component_saturated` added as ranking tiebreaks. **No entity on either fixture exceeds 1.0** — preventive, not an observed mis-ranking. `ml_scored` now separates "found nothing unusual" from "never had a profile" |
@@ -53,8 +53,12 @@ Three of those four were closed by **re-measuring** rather than by new code — 
 figure was obsolete. That is now the first step for any remaining item.
 
 Remaining red: **FR-9 only**, and it is blocked on evidence rather than code — STRONG is 0 at
-every window from 1 to 60 minutes, so no threshold or parser change reaches it. The narrowest
-unblock is five KYC rows from the case officer; see §7.6.
+every window from 1 to 60 minutes, so no threshold or parser change reaches it. The recorded
+next step was *five KYC rows from the case officer*. **That has now been tested and was the
+wrong ask.** The KYC bridge was found in the case folder, built, and measured: 35 account↔phone
+links, `account+phone` 2 → 30, and STRONG still 0. Call and transaction now coincide (MEDIUM
+6 → 11, and firing at W=1 for the first time); the leg that never lands is the **IP session**.
+The narrowest unblock is **IPDR coverage** — see COMPONENT_STATUS §4.1.1 and §7.6.
 
 ---
 
