@@ -42,6 +42,11 @@ export function mapEntity(row: RiskEntity): Entity {
       : [{ kind: "ACCOUNT_NO", value: row.entity_id }],
     risk: Number(row.risk_score || 0),
     mlScore: Number(row.ml_score || 0),
+    // Default TRUE, not false: an older backend that does not send the field was fitting the
+    // forest over every entity, so its 0.0 really was a measurement. Defaulting to false
+    // would relabel those as unexamined.
+    mlScored: row.ml_scored ?? true,
+    typologiesFired: Number(row.typologies_fired ?? (row.rule_flags || []).length),
     flags: (row.rule_flags || []).map((f) => f.rule),
     ruleFlags: (row.rule_flags || []).map((f) => ({
       rule: f.rule,

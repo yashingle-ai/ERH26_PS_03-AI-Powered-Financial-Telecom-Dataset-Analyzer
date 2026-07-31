@@ -30,9 +30,9 @@ so.
 | 8 | Unified timeline | 🟢 works | per-entity, bisect-indexed |
 | 9 | **Temporal coincidence (flagship)** | 🔴 STRONG = 0 | **0 at every window from 1 to 60 min** — not a calibration problem. MEDIUM 2 → 6 as W widens. **7 entities now hold CALL+IP** (was 6 with any IP at all); the missing leg is the transaction, i.e. the account↔phone bridge. The original "no IP evidence exists" proof covered only the IPDR files — see §7 |
 | 10 | Link via UPI / IP / IMEI / beneficiary | 🟡 partial | UPI 2,852 · BENEFICIARY 10,413 · PHONE 9,246 · IMEI 30 · IMSI 32 · **IP 18** (was 6) · **ACCOUNT_NO 3,022** (was 549) · **account↔phone 3** (was 1) |
-| 11 | Rules + ML detection | 🟡 works on synthetic only | 6 rules fire on `demo`; **0 high-risk on real** |
-| 12 | Risk scores | 🟡 same cause as FR-11 | demo 3 high / 11 med / 75 low; real **0 high** |
-| 13 | Mule-account signatures | 🟡 same cause as FR-11 | fires on `demo` only |
+| 11 | Rules + ML detection | 🟡 **causes now settled** | All 8 rules fire on `demo`, scenario recall **15/15**. On `fir-65-2024` 6 of 8 fire (148 flags). Seven detection defects fixed 30 Jul — §8 — including one regression that had moved every observed entity's ML score by up to 12.4 points. `0 high-risk on real` is now explained per rule rather than open |
+| 12 | Risk scores | 🟡 **saturation instrumented** | demo 3 high / 14 med / 87 low. Enabled weights sum to **1.2** against a component capped at **1.0**, so 6 and 8 typologies can tie; `typologies_fired` / `rule_weight_raw` / `rule_component_saturated` added as ranking tiebreaks. **No entity on either fixture exceeds 1.0** — preventive, not an observed mis-ranking. `ml_scored` now separates "found nothing unusual" from "never had a profile" |
+| 13 | Mule-account signatures | 🟡 **eligible = 6, not 9,996** | Counterparty-side flows fixed, so rules can now see an account visible only as somebody else's payee: `mule_account` eligibility on `demo` 30 → 64. It still fires 0 on both real cases, and that is **correct on the evidence** — a counterparty-only entity is a terminal payee, so `max_rapid_forward` is 0 by definition. Six entities in 7,358 reach fan-in ≥ 5; none forwards. The fix's actual yield was elsewhere: **`structuring` 9 → 23 on `FIR-0006-2025 U`**, 14 counterparty accounts each receiving ≥3 credits in [₹9L, ₹10L) — the accounts money was structured *into* |
 | 14 | Money-flow + comms graphs, drill-down | 🟢 works | 8,435 nodes on real data, HTTP 200 |
 | 15 | Filter / search (entity, amount, time, location) | 🟢 **works** | all four on **both** paths: the DSL via `/v1/query`, and `/v1/events` directly (`entity`, `location`, `min_amount`/`max_amount`, `start`/`end`) as of 30 Jul. `location` matches tower location or cell id on both, so they answer the same question |
 | 16 | Forensic report (PDF/Word) | 🟢 **works** | `POST /v1/report/{ds}` streams PDF (`%PDF`, 92,935 B) and DOCX (`PK`, 123,073 B); bad fmt → 400 |
@@ -601,7 +601,9 @@ Faster despite doing strictly more work, because duplicate exhibits are now pars
 3. **WhatsApp `_chat.txt` — 5,148 rows** of timestamped communication with no home in the
    canonical model. Mapping it onto `CALL` would put false call records into evidence. Adding
    a `MESSAGE` type is a model change and a new baseline, not a fix.
-4. **Detector blind to counterparty-side transactions** — §7.7. Quantified, not fixed.
+4. ~~**Detector blind to counterparty-side transactions**~~ — fixed in §8. Counterparty entities
+   now carry fan-in and transfer-derived flows. `mule_account` still fires 0 on `fir-65-2024`,
+   and per-rule eligibility now shows why: **6 eligible, not 9,996.**
 5. **`_Doc_202404201542344604122.pdf` loses 10 of 125 events** under recovery. Unexplained,
    0.003% of the dataset. Recorded as unexplained rather than assumed benign — assuming a
    small residual was harmless is exactly what produced the false PASS in §7.5.
@@ -621,3 +623,50 @@ Faster despite doing strictly more work, because duplicate exhibits are now pars
   10,027 to 25 collapse and could not have caught the preamble loss, where every row survived.
 - **Do not run three case-scale jobs at once.** Three concurrent passes exhausted memory and
   killed a run with `MemoryError` in an unrelated function.
+- **Widening a feature-vector population silently refits the model.** Adding counterparty
+  entities to `feats` was a rules change on its face; it moved every observed entity's ML score
+  by up to 12.4 risk points. Any change to *who is in* a fitted population needs its own A/B.
+- **State what a setting was measured to do, not what it was intended to do.** Halving the
+  MEDIUM weight was written up as removing a band promotion. It removes none — the same three
+  entities cross either way. The justification is evidential, and saying so is the whole point.
+- **Each case exists at two paths, and `files` differs between them.** `datasets/FIR 65-2024`
+  holds 646 files as delivered, including TIFs and macOS `._` resource forks;
+  `datasets/raw/fir-65-2024` holds 506 staged with flattened names. Both produce **identical**
+  events (247,492), transactions (40,309), calls (203,050), entities (7,358), transfers (14,217)
+  and an identical eligibility table — but `files` reads 952 against 961, because archive
+  members are counted and the staged copy expands differently. Quote the path with the figure,
+  and never A/B across the two: an early comparison here moved code *and* path at once and
+  could attribute nothing.
+
+---
+
+## 8. Detection cycle — 30 Jul 2026
+
+Seven defects, of which **one was a regression introduced by the fix for another** and caught
+before merge by A/B rather than by a test. Full detail in `docs/COMPONENT_STATUS.md` §6.1–6.4.
+
+| # | Defect | Fix | Measured effect |
+|---|---|---|---|
+| D1 | `call_transfer_coincidence` fed STRONG hits only, and STRONG is **0 on both real cases** — the rule was structurally dead on real evidence | Both tiers reach `detect` | `demo` fires 9 → 30, entity-level recall **0.500 → 1.000**; `fir-65-2024` **0 → 2** |
+| D2 | MEDIUM scored as heavily as STRONG, so an uncorroborated coincidence contributed like a corroborated one | `medium_weight: 0.075` vs `0.15` | Score contribution 10.5 → 5.3 points. Does **not** change which entities change band |
+| D3 | Counterparty-only entities had empty feature vectors, so no rule could fire on an account seen only as somebody else's payee | `features.build` fills fan-in and transfer-derived flows | `mule_account` eligibility on `demo` 30 → 64. **On `FIR-0006-2025 U`, `structuring` fired 9 → 23** — 14 counterparty accounts that each received ≥3 INR credits in [₹9L, ₹10L), 12 of which had no risk row at all before. This, not `mule_account`, was the real yield |
+| D4 | **Regression from D3**: the Isolation Forest silently refit over the enlarged population | Fit only on entities holding records of their own; `ml_scored` flag distinguishes the two kinds of 0.0 | Fit population 30 → 104 → **30**. Before the fix: 29 of 30 observed entities moved, mean \|Δml\| 0.252, max 0.414 — **7.6 risk points on average, 12.4 at worst** |
+| D5 | `eligible` was `len(feats)` for **5 of 8 rules**, so `mule_account` read "9,996 eligible, 0 fired" | Per-rule structural precondition + a sentence when eligible is 0 | `fir-65-2024`: mule 9,996 → **6**, rapid_in_out → **35**, coincidence → **6**, comm_burst → **3,991**, dormant → **454** |
+| D6 | The report cut the eligibility note at **96 characters** — shorter than every note the detector produces, so the reader got the premise and not the conclusion, in the document most likely to be relied on | PDF wraps that column instead of truncating; DOCX never needed a cap | Same defect class as the STR grounds truncated at 5 and 3, in the same file. Pinned in both formats by rendering the report and reading the cell back |
+| D7 | `ml_scored` was computed but not persisted, and `create_all` leaves an existing table's shape alone — so the column would have worked on every fresh checkout and failed with "no such column" on the machine with the longest history | Nullable column + a narrow guarded `ALTER TABLE` on connect (nullable adds only; never a drop, rename or type change) | Verified against a database built without the column: added on connect, idempotent on a second run, and a row round-trips with `ml_scored = False` intact |
+
+Verified by A/B against `a7709fe` on `demo`, same dataset, same window: **`ml moved: 0 of 89`**,
+and every remaining score move is exactly `0.7 × 0.075 × 100 = 5.3` — one rule's tier weight.
+Nothing else in the pipeline moved. Real-case A/B in `COMPONENT_STATUS.md` §6.3.
+**278 tests pass**; `test_ml_fit_population.py` pins D4.
+
+Both real cases were then A/B'd with code as the only variable (same staged path, same window).
+On `FIR-0006-2025 U` `high_risk_entities` stays at **2** and `top_risk_score` moves 85.2 → 85.5;
+on `fir-65-2024` it stays at **0** and 54.3 → 54.2. The baseline arm's 54.3 reproduces the figure
+already recorded across the FR-9 window sweep, which is the independent check on the harness.
+
+**Not claimed:** `high_risk_entities` is still 0 on `fir-65-2024` and `mule_account` still fires
+0 on either case. That is now *explained* rather than open — a counterparty-only entity in that case is a
+terminal payee, money in and never out, because the case holds the victim's statement and not
+the mule's, so `max_rapid_forward` is 0 by definition. Six entities in 7,358 reach fan-in ≥ 5 and
+none of them forwards. Missing evidence, not a code defect — the same shape as FR-9.

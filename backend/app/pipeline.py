@@ -139,13 +139,16 @@ def apply_analysis(inv: Investigation, window_minutes: int | None = None) -> Inv
     all_hits = window_correlator.correlate(
         inv.timeline, inv.entities, inv.events, window_minutes)
     inv.correlation_hits, inv.correlation_hits_medium = window_correlator.split_by_tier(all_hits)
-    # Risk coincidence_count uses STRONG only — MEDIUM must not inflate the score.
-    inv.risk = detection.detect(inv.events, inv.transfers, inv.correlation_hits, inv.entities)
+    # Both tiers reach the detector now. `call_transfer_coincidence` is named for the pair,
+    # not the triple, and counting STRONG only left it with 7,358 eligible entities and 0
+    # fired on the real case. The flag detail states which tier produced the hit.
+    inv.risk = detection.detect(inv.events, inv.transfers, inv.correlation_hits,
+                                inv.entities, inv.correlation_hits_medium)
     # The audit trail behind the risk numbers. Without it "0 high-risk entities" is
     # indistinguishable from "the detector never ran", which is the reading an investigator
     # would take from a clean-looking report.
     inv.rule_eligibility = detection.eligibility(
-        inv.events, inv.transfers, inv.correlation_hits)
+        inv.events, inv.transfers, inv.correlation_hits, inv.correlation_hits_medium)
     inv.graph = graph_service.build(inv.events, inv.entities, inv.risk)
     return inv
 

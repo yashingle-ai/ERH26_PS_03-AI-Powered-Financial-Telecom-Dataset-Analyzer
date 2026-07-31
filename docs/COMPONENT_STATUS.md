@@ -68,12 +68,158 @@
 
 | Component | Status | Evidence |
 |---|---|---|
-| 6 rules on `demo` | 🟢 | Fire as designed |
-| `high_risk_entities = 0` on real data | 🟡 | **Two independent causes**, not one |
-| — cause 1: FATF thresholds tuned for the fixture | 🟡 | F1 open in the fix queue |
-| — cause 2: `features` is primary-only | 🟡 | **15,098** entities hold transactions only as counterparty → empty feature vector. `E02650` has 84 transactions, ₹280,700 in / ₹268,508 out, `max_rapid_forward` 1.0 — and `mule_account` cannot fire on it. Simulation: `rapid_in_out` 20 → 120, `mule_account` 0 → 3 |
-| MEDIUM hits never reach the risk model | 🟡 | `apply_analysis` passes STRONG only. Harmless while STRONG = 0; a bug the moment it is not. Explains `top_risk_score` flat at 54.3 across all five windows |
-| `layering` / `circular_flow` | 🟢 | Read `transfers`, which already carries counterparty flows — unaffected by the above |
+| 6 rules on `demo` | 🟢 | Fire as designed. Scenario-level recall **15/15** |
+| — cause 2: `features` was primary-only | 🟢 **fixed** | Counterparty entities now carry fan-in and transfer-derived flows. `mule_account` eligibility on `demo` 30 → 64 entities |
+| MEDIUM hits never reached the risk model | 🟢 **fixed** | Both tiers reach `detect`. `call_transfer_coincidence` on `demo` fires 9 → 30, entity-level recall **0.500 → 1.000**; on `fir-65-2024` **0 → 2** |
+| MEDIUM weighted below STRONG | 🟢 | `medium_weight: 0.075` vs `0.15`. A call+transfer pair with no IP corroboration is weaker evidence. See §6.1 |
+| ML fit population | 🟢 **regression caught pre-merge** | See §6.2 — the counterparty fix had silently moved every observed entity's score by up to 12.4 points |
+| `ml_score = 0.0` was ambiguous | 🟢 | New `ml_scored` flag. Min-max normalisation also hands 0.0 to the least anomalous *fitted* entity, so "not anomalous" and "never examined" read identically without it. Closes gap D5 |
+| Per-rule eligibility | 🟢 | Was `len(feats)` for 5 of 8 rules. See §6.4 |
+| Score saturation | 🟡 preventive | Enabled weights sum to **1.2** against a rule component capped at **1.0**. `typologies_fired` / `rule_weight_raw` / `rule_component_saturated` added, and made ranking tiebreaks. **No entity on either fixture actually exceeds 1.0** — max is exactly 1.0, 0 saturated — so this is diagnostic, not a mis-ranking that was observed |
+| `layering` / `circular_flow` | 🟢 | Read `transfers`, which already carried counterparty flows — unaffected by the above |
+| `high_risk_entities = 0` on real data | 🟢 **explained, not a defect** | Cause 1 (FATF thresholds) was withdrawn on evidence: `FIR-0006-2025 U` reaches **2 high-risk entities and a top score of 85.5** on the identical unrescaled config (§6.3). §6.4 now says per rule why the remainder is a property of the evidence |
+
+### 6.1 Firing on MEDIUM: what it bought and what it cost
+
+Entity-level, on `demo`, for `call_transfer_coincidence` alone:
+
+| | fired | TP | FP | precision | recall |
+|---|---|---|---|---|---|
+| STRONG only (before) | 9 | 3 | 6 | 0.333 | **0.500** |
+| both tiers (now) | 30 | 6 | 24 | **0.200** | **1.000** |
+
+Recall doubled because a coincidence has two ends and STRONG only caught one. Precision 0.200
+sits between the two accepted rules either side of it — `layering` 0.195, `rapid_in_out` 0.107
+— so it is not an outlier in this system. And MEDIUM is the **only** tier that occurs on either
+real case: STRONG is 0 on both, so without this the rule was structurally dead on real evidence.
+
+Honest limit: 30 of 30 eligible entities fire it on `demo`. With 1,443 calls and 2,736
+transactions over 30 entities, a call within 10 minutes of a transaction is near-certain, so on
+this fixture the rule carries almost no discriminating power. On `fir-65-2024` it is highly
+selective — 6 eligible, 2 fired. The tier weight is the response to that, not a threshold.
+
+Also honest: halving the weight did **not** change which entities change band. The same three
+cross into medium either way (from 37.3 / 38.9 / 39.8), and each already held three other
+typologies, so MEDIUM was their fourth signal and not their only one. The halving sizes the
+contribution to the strength of the evidence; it does not suppress promotions.
+
+### 6.2 The regression the counterparty fix introduced 🔴→🟢
+
+`features.build` gives a feature vector to any entity named in a transfer. That is right for the
+rules — fan-in is real evidence about a payee — and wrong for the ML arm, which was silently
+refit over the enlarged population:
+
+| | before | after the counterparty fix |
+|---|---|---|
+| entities in the Isolation Forest fit | 30 | **104** (74 of them counterparty-only) |
+
+Each of the 74 carries a vector whose one non-zero cell is a transfer-derived credit, so the
+forest's definition of *normal* became "a counterparty with one credit and nothing else" — and a
+real account holder, with calls, sessions and hundreds of transactions, became an outlier **by
+construction rather than by behaviour**. Measured cost, before the restriction was put back:
+
+- **29 of 30** observed entities moved by more than 0.05
+- mean |Δml| **0.252**, max **0.414**
+- at `ml_weight` 0.30 that is **7.6 risk-score points on average, 12.4 at worst**, against a
+  high band that begins at 70 — caused entirely by who else was in the fit
+
+Fixed by fitting on entities with records of their own and returning 0.0 for the rest, which is
+what they received before they had vectors at all. Verified by A/B against `a7709fe` on the same
+dataset: **`ml moved: 0 of 89`**, and every remaining score move is exactly `0.7 × 0.075 × 100 =
+5.3` — one rule's tier weight, fully attributable.
+
+Guarded by `backend/tests/test_ml_fit_population.py`. One of those tests initially failed at
+`1.0 → 0.998`: the extra edges had been routed *through* the observed entities, changing their
+own `fan_out`, which is one of the thirteen ML features. That is a legitimate reason for a score
+to move. The invariant is narrower than it first looked — **your own evidence may move your
+score, other people's may not** — and the test now says so.
+
+### 6.3 Real-case A/B, code as the only variable
+
+Both arms run the same staged path (`datasets/raw/…`) so nothing but the build differs — see the
+`files` trap in `PS_COMPLIANCE_AND_FIX_PLAN.md` §7.11 for why the path must be held fixed.
+
+`fir-65-2024`, W=10:
+
+| | baseline `a7709fe` | fixed |
+|---|---|---|
+| files / events / transactions / calls / ip_sessions | 961 / 247,492 / 40,309 / 203,050 / 4,133 | **identical** |
+| entities / transfers | 7,358 / 14,217 | **identical** |
+| flagged entities | 119 | **119** |
+| band changes | — | **0** |
+| high / medium / low | 0 / 26 / 7,332 | 0 / 26 / **9,970** |
+| `top_risk_score` | **54.3** | **54.2** |
+| ML fit population | 7,358 | **7,358** |
+
+Exactly **two** entities gain a rule, both `call_transfer_coincidence` from this case's two
+MEDIUM hits — the intended fix, and nothing else. `low` grows by 2,638 because counterparty-only
+entities now receive a rules-only row instead of no row at all.
+
+The baseline's **54.3 is precisely the figure already recorded** for this case across the whole
+FR-9 window sweep — the independent check that the harness measures what the pipeline reports.
+The code moves it to 54.2, *down* 0.1. ML scores shift for 3,171 of 7,358 entities but by a mean
+of **0.001** and a max of 0.079, i.e. **2.4 risk points at worst**: the fit population is
+unchanged, and only the vectors of *observed* entities holding no transactions of their own
+gained transfer-derived flows. That mechanism is pinned by
+`test_an_observed_entity_with_no_transactions_is_also_filled`.
+
+`FIR-0006-2025 U`, W=10 — 1,305 files, 456,327 events, 343,951 transactions, **112,174 calls
+(the documented invariant, unchanged)**, 202 IP sessions, 64,931 transfers in both arms:
+
+| | baseline `a7709fe` | fixed |
+|---|---|---|
+| high / medium / low | 2 / 42 / 5,430 | 2 / 44 / **24,887** |
+| `top_risk_score` | **85.2** | **85.5** |
+| flagged entities | 179 | **191** |
+| `structuring` fired | 9 | **23** |
+| ML fit population | 5,363 | **5,363** |
+
+**`high_risk_entities` stays at 2** — E00012 on five typologies and E00009 on four, both entities
+the case holds records for — so the conclusion that withdrew F1's calibration half survives
+unchanged. This case has **0** MEDIUM hits, so D1 and D2 cannot reach it at all.
+
+**The unpredicted result: `structuring` fired 9 → 23.** All 14 additions are counterparty
+entities that received **three or more INR credits in [₹9L, ₹10L)** — the just-below-reporting-
+threshold signature, observed from the payer's side. Twelve had no risk row at all before. These
+are the accounts money was structured *into*, and they are exactly the kind of subject the
+counterparty fix was built to reach — `mule_account` was simply the wrong rule to expect it from.
+Each carries `ml_scored = false` and a rules-only score, which is the honest presentation: real
+evidence about the money, no behavioural profile of the account holder.
+
+Two entities change band, **both at the boundary**: E00007 39.9 → 40.0 and E00021 39.7 → 40.6,
+on ML shifts of 0.004 and 0.029 — 0.1 and 0.9 risk points. Their rule sets are identical in both
+arms. That is a statement about how brittle a hard band edge is for an entity already sitting on
+it, not about this change. Worst ML shift anywhere on this case is 0.159 → **4.8 risk points**,
+against the 12.4 the unfixed D3 was causing.
+
+The `structuring` result also corrects something in §6.1's framing: the counterparty fix was
+justified there on `mule_account` eligibility alone, which turned out to be the *least* of what
+it did. Its real yield was 14 structuring subjects on live evidence.
+
+### 6.4 Eligibility was an entity count wearing a diagnosis
+
+`eligible` fell back to `len(feats)` for five of the eight rules, so on `fir-65-2024`
+`mule_account` reported **9,996 eligible, 0 fired** — which reads as a broken detector. It is now
+each rule's structural precondition, before its threshold applies:
+
+| rule | eligible now means | `fir-65-2024` before → after | fired |
+|---|---|---|---|
+| `mule_account` | reaches `min_fan_in` | 9,996 → **6** | 0 |
+| `rapid_in_out` | seen both receiving *and* sending | 9,996 → **35** | 21 |
+| `call_transfer_coincidence` | holds both a call and a transaction | 9,996 → **6** | 2 |
+| `comm_burst` | has call records | 9,996 → **3,991** | 30 |
+| `dormant_activation` | has ≥2 transactions to measure between | 9,996 → **454** | 25 |
+
+"6 eligible, 0 fired" is a finding: **only six entities in a 7,358-entity case reach fan-in ≥ 5
+at all, and none of them forwards.** And when eligible is 0, a sentence says why — *"no entity is
+seen both receiving and sending, so forwarding cannot be observed — a one-hop view of the money
+trail."* That is what stops `fired = 0` reading as "nothing suspicious here".
+
+`mule_account` still fires 0 on `fir-65-2024`, and that is **correct behaviour on incomplete
+evidence, not a code defect**: a counterparty-only entity here is a *terminal payee* — money in,
+never out — because the case holds the victim's statement and not the mule's. `max_rapid_forward`
+is 0 by definition. Same shape as FR-9: a missing-data problem wearing a detection problem's
+clothes.
 
 ## 7. Reject reporting (rule 2: nothing dropped silently)
 

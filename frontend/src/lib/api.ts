@@ -144,6 +144,16 @@ export type RiskEntity = {
   risk_score: number;
   band: "low" | "medium" | "high";
   ml_score: number;
+  /** Whether `ml_score` is a measurement or an absence. The forest is fitted only on entities
+   *  that have records of their own, and min-max normalisation also hands 0.0 to the least
+   *  anomalous fitted entity — so a bare 0.0 cannot distinguish "we looked and found nothing
+   *  unusual" from "there was never anything to look at". */
+  ml_scored?: boolean;
+  /** How many distinct typologies fired. `risk_score` saturates (enabled weights sum to 1.2
+   *  against a component capped at 1.0), so this is what separates six from eight. */
+  typologies_fired?: number;
+  rule_weight_raw?: number;
+  rule_component_saturated?: boolean;
   rule_flags: RuleFlag[];
   features: Record<string, number | null | undefined>;
   identifiers?: IdentifierDto[];

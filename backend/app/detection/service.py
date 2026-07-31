@@ -34,12 +34,35 @@ _ML_FEATURES = ["txn_count", "total_in", "total_out", "fan_in", "fan_out",
                 "max_calls_hour", "max_dormancy_days"]
 
 
-def _ml_scores(feats: dict) -> dict[str, float]:
+def _ml_scores(feats: dict) -> tuple[dict[str, float], set[str]]:
+    """Anomaly score per entity, plus the set the forest was actually fitted on.
+
+    Fitted over entities we hold observations for — not over the counterparties as well.
+    `features.build` gives a feature vector to any entity named in a transfer, so most of
+    `feats` can be entities seen only as somebody else's payee: on the demo dataset that is
+    **74 of 104**, and every one of the 74 carries a vector whose only non-zero cell is a
+    transfer-derived credit. Fitting the forest over that mixture makes "a counterparty with
+    one credit and nothing else" the definition of normal, so a real account holder — with
+    calls, sessions and hundreds of transactions — becomes an outlier *by construction*
+    rather than by behaviour.
+
+    Measured, before this restriction was put back: every one of the 30 observed entities but
+    one moved by more than 0.05, mean |delta| 0.252 and max 0.414. At `ml_weight` 0.3 that is
+    an average of **7.6 risk-score points and a worst case of 12.4** — enough to cross the
+    medium/high band boundary at 70 — caused entirely by who else was in the fit.
+
+    Entities outside the fit get 0.0, which is what they got before they had feature vectors
+    at all, so their score comes from the rules alone. That is the defensible half anyway:
+    an anomaly score for an entity whose own records are absent would be asserting a
+    behavioural profile we do not have. The returned set is what makes that 0.0 legible —
+    min-max normalisation also hands 0.0 to the least anomalous *fitted* entity, so the two
+    kinds of zero are otherwise indistinguishable.
+    """
     cfg = config.scoring_rules().get("ml", {}).get("isolation_forest", {})
-    if not cfg.get("enabled", True) or len(feats) < 8:
-        return {eid: 0.0 for eid in feats}  # too few samples to model
-    eids = list(feats)
-    X = np.array([[float(feats[e].get(k, 0) or 0) for k in _ML_FEATURES] for e in eids])
+    observed = [e for e, f in feats.items() if (f.get("total_events") or 0) > 0]
+    if not cfg.get("enabled", True) or len(observed) < 8:
+        return {eid: 0.0 for eid in feats}, set()  # too few samples to model
+    X = np.array([[float(feats[e].get(k, 0) or 0) for k in _ML_FEATURES] for e in observed])
     model = IsolationForest(
         contamination=cfg.get("contamination", 0.05),
         random_state=cfg.get("random_state", 42),
@@ -50,7 +73,9 @@ def _ml_scores(feats: dict) -> dict[str, float]:
     norm = (raw - lo) / (hi - lo) if hi > lo else np.zeros_like(raw)
     if _persist_enabled():
         _save_model(model, X.shape, cfg)
-    return {e: float(s) for e, s in zip(eids, norm)}
+    scores = {eid: 0.0 for eid in feats}
+    scores.update({e: float(s) for e, s in zip(observed, norm)})
+    return scores, set(observed)
 
 
 def _persist_enabled() -> bool:
@@ -88,8 +113,24 @@ def _save_model(model, shape, cfg) -> None:
         log.warning("model persistence failed: %s", e)
 
 
-def eligibility(events: list[dict], transfers: list[dict],
-                correlation_hits: list[dict]) -> list[dict]:
+def risk_rank(row: dict) -> tuple:
+    """The order an investigator reads risk rows in: score, typology breadth, raw weight.
+
+    One definition, shared by /v1/entities, /v1/analyze, the heat map and the report, because
+    two copies of a ranking rule drift and then two screens disagree about who is worst.
+
+    `risk_score` saturates: the enabled rule weights sum to 1.2 against a rule component
+    capped at 1.0, so an entity exhibiting six typologies and one exhibiting eight can score
+    identically. Ordering on score alone then leaves them in dict order — at the top of the
+    list, which is the part that gets read.
+    """
+    return (-(row.get("risk_score") or 0),
+            -(row.get("typologies_fired") or 0),
+            -(row.get("rule_weight_raw") or 0.0))
+
+
+def eligibility(events: list[dict], transfers: list[dict], correlation_hits: list[dict],
+                medium_hits: list[dict] | None = None) -> list[dict]:
     """Per-rule audit trail: enabled, eligible, fired.
 
     `rules.eligibility_report` was written and tested but never called by anything, so the
@@ -103,16 +144,16 @@ def eligibility(events: list[dict], transfers: list[dict],
     function's signature and its callers untouched for one extra pass over the events.
     """
     cfg = config.scoring_rules()
-    feats = featmod.build(events, transfers, correlation_hits)
+    feats = featmod.build(events, transfers, correlation_hits, medium_hits)
     return rulemod.eligibility_report(feats, transfers, cfg)
 
 
 def detect(events: list[dict], transfers: list[dict], correlation_hits: list[dict],
-           entities: dict) -> dict:
+           entities: dict, medium_hits: list[dict] | None = None) -> dict:
     cfg = config.scoring_rules()
-    feats = featmod.build(events, transfers, correlation_hits)
+    feats = featmod.build(events, transfers, correlation_hits, medium_hits)
     flags = rulemod.run_all(feats, transfers, cfg)
-    ml = _ml_scores(feats)
+    ml, ml_fitted = _ml_scores(feats)
 
     by_entity: dict[str, dict] = defaultdict(lambda: {"rules": [], "rule_weight": 0.0})
     for fl in flags:
@@ -128,7 +169,8 @@ def detect(events: list[dict], transfers: list[dict], correlation_hits: list[dic
     results: dict[str, dict] = {}
     all_eids = set(feats) | set(by_entity)
     for eid in all_eids:
-        rule_component = min(1.0, by_entity[eid]["rule_weight"])
+        raw_weight = by_entity[eid]["rule_weight"]
+        rule_component = min(1.0, raw_weight)
         ml_component = ml.get(eid, 0.0)
         score = round(100 * (w_rules * rule_component + w_ml * ml_component), 1)
         band = "low"
@@ -142,6 +184,21 @@ def detect(events: list[dict], transfers: list[dict], correlation_hits: list[dic
             "band": band,
             "ml_score": round(ml_component, 3),
             "rule_flags": by_entity[eid]["rules"],
+            # The enabled rule weights sum to 1.2 while `rule_component` is capped at 1.0, so
+            # an entity exhibiting six typologies and one exhibiting eight receive the same
+            # rule component and `risk_score` cannot separate them — precisely where an
+            # investigator needs the ranking to be sharpest. These three fields restore that
+            # discrimination without touching the score, per the rule against redefining a
+            # headline metric: they are added, not substituted.
+            "typologies_fired": len(by_entity[eid]["rules"]),
+            "rule_weight_raw": round(raw_weight, 3),
+            "rule_component_saturated": raw_weight > 1.0,
+            # Whether `ml_score` is a measurement or an absence. 0.0 is returned both for the
+            # least anomalous fitted entity and for every entity the forest was not fitted on
+            # (no records of its own, or fewer than 8 observed entities in the whole case —
+            # gap D5). Without this an investigator cannot tell "we looked and found nothing
+            # unusual" from "we never had anything to look at".
+            "ml_scored": eid in ml_fitted,
             "features": {k: feats.get(eid, {}).get(k) for k in _ML_FEATURES},
         }
     # write risk score back onto entities (FR-12)

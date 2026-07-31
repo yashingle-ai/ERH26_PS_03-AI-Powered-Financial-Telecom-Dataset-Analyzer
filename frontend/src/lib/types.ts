@@ -41,6 +41,10 @@ export type Entity = {
   identifiers: Identifier[];
   risk: number;
   mlScore: number;
+  /** False when the anomaly model never had a profile for this entity — see `ml_scored`.
+   *  Rendering its 0.0 as "0% anomalous" would claim a measurement that was never made. */
+  mlScored: boolean;
+  typologiesFired: number;
   flags: string[];
   ruleFlags: RuleFlagDisplay[];
   events: number;

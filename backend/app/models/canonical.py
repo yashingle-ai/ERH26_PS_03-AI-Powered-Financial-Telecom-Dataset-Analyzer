@@ -17,6 +17,7 @@ import uuid
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -171,6 +172,12 @@ class RiskAssessment(Base):
     risk_score = Column(Float, nullable=False)
     band = Column(String, nullable=False)
     ml_score = Column(Float, nullable=True)
+    #: Whether `ml_score` is a measurement or an absence. The Isolation Forest is fitted only on
+    #: entities holding records of their own, and min-max normalisation also assigns 0.0 to the
+    #: least anomalous fitted entity — so a persisted 0.0 alone cannot tell "examined, not
+    #: anomalous" from "never had a profile to examine". Nullable because rows written before
+    #: this column existed genuinely do not know which they were.
+    ml_scored = Column(Boolean, nullable=True)
     rule_flags = Column(JSON, nullable=False, default=list)
 
 

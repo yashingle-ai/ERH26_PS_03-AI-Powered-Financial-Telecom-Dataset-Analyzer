@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from sqlalchemy import create_engine, delete
+from sqlalchemy import create_engine, delete, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..core import config
@@ -28,11 +28,40 @@ from ..models.canonical import (
 log = get_logger(__name__)
 
 
+#: Columns added after the first release, as {table: {column: DDL type}}. `create_all` creates
+#: missing TABLES and silently leaves an existing table's shape alone, so a column added to a
+#: model never reaches a database that already exists — the next insert fails with "no such
+#: column" on the one machine that has been running longest. There is no Alembic here, and
+#: introducing it for a single nullable column is not proportionate, so this closes the gap
+#: explicitly rather than leaving it to be discovered in the field.
+_ADDED_COLUMNS = {"risk_assessment": {"ml_scored": "BOOLEAN"}}
+
+
+def _add_missing_columns(eng) -> None:
+    """Add post-release nullable columns to tables that predate them. Idempotent, additive.
+
+    Deliberately narrow: nullable adds only, never a drop, a rename or a type change, because
+    those need a real migration and a backup. Anything it cannot do is left for one.
+    """
+    insp = inspect(eng)
+    for table, columns in _ADDED_COLUMNS.items():
+        if not insp.has_table(table):
+            continue                                    # create_all will build it in full
+        have = {c["name"] for c in insp.get_columns(table)}
+        for name, ddl_type in columns.items():
+            if name in have:
+                continue
+            with eng.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+            log.info("added missing column %s.%s (%s)", table, name, ddl_type)
+
+
 @lru_cache(maxsize=4)
 def _engine(url: str):
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     eng = create_engine(url, connect_args=connect_args, future=True)
     Base.metadata.create_all(eng)
+    _add_missing_columns(eng)
     return eng
 
 
@@ -92,7 +121,8 @@ def persist_investigation(inv, dataset: str | None = None, url: str | None = Non
         for r in inv.risk.values():
             s.add(RiskAssessment(dataset=dataset, entity_id=r["entity_id"], label=r.get("label"),
                                  risk_score=r["risk_score"], band=r["band"],
-                                 ml_score=r.get("ml_score"), rule_flags=r.get("rule_flags") or []))
+                                 ml_score=r.get("ml_score"), ml_scored=r.get("ml_scored"),
+                                 rule_flags=r.get("rule_flags") or []))
             counts["risk"] += 1
 
         for h in inv.correlation_hits:

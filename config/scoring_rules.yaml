@@ -47,6 +47,23 @@ rules:
     # The signature fusion pattern: call + online(IP) + transfer within window
     window_minutes: 10                      # mirrors correlation.default_window_minutes
     weight: 0.15
+    # A MEDIUM hit is the same call+transfer pair with NO corroborating IP session, so it is
+    # weaker evidence and is not scored as a STRONG one.
+    #
+    # Measured on the demo set. Firing on MEDIUM at all takes this rule's entity-level recall
+    # from 0.500 to 1.000 — it catches both ends of the call instead of one — at a precision
+    # cost of 0.333 -> 0.200, which sits in the same range as the accepted `layering` (0.195)
+    # and above `rapid_in_out` (0.107). It is also the only tier that occurs on either real
+    # case, where STRONG is 0. That is the case for firing.
+    #
+    # The case for HALVING is evidential, not empirical: at the full 0.15 every one of the 30
+    # eligible demo entities received the identical +10.5, which adds no ranking information
+    # at all. Halving does NOT change which entities change band here — the same three cross
+    # into medium in both arms (+5.2 vs +10.5 from 37.3/38.9/39.8), and each of the three
+    # already carried three other typologies, so MEDIUM was their fourth signal and not their
+    # only one. Do not claim this setting suppresses promotions; it sizes the contribution to
+    # the strength of the evidence behind it.
+    medium_weight: 0.075
 
   comm_burst:
     enabled: true

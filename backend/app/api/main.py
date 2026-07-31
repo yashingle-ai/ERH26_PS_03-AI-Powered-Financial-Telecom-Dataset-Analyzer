@@ -44,6 +44,7 @@ from backend.app.api.security import (
     require_role,
 )
 from backend.app.core.logging_config import audit, get_logger, setup_logging
+from backend.app.detection import service as detection
 from backend.app.ingestion import detector
 from backend.app.reporting import service as reporting
 
@@ -214,6 +215,10 @@ def _serialize_identifiers(entity: dict | None) -> list[dict]:
         rows.append({"kind": str(kind), "value": str(value)})
     rows.sort(key=lambda r: (r["kind"], r["value"]))
     return rows
+
+
+#: Shared with the report generator so both agree on who is worst. See `detection.risk_rank`.
+_risk_rank = detection.risk_rank
 
 
 def _enrich_risk(row: dict, inv) -> dict:
@@ -457,7 +462,7 @@ def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
         from backend.app.persistence import store
         store.persist_investigation(inv, dataset=req.dataset)
         audit("persist", user=user["username"], dataset=req.dataset)
-    top = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])[:20]
+    top = sorted(inv.risk.values(), key=_risk_rank)[:20]
     return {
         "dataset": req.dataset,
         "window_minutes": req.window_minutes,
@@ -474,7 +479,7 @@ def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
 def entities(ds: str, window: int = 10, limit: int = Query(50, le=500), offset: int = 0,
              user=Depends(require_role("analyst"))):
     inv = _analyze(ds, window)
-    rows = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])
+    rows = sorted(inv.risk.values(), key=_risk_rank)
     items = [_enrich_risk(r, inv) for r in rows[offset: offset + limit]]
     return {"total": len(rows), "items": items}
 
@@ -616,7 +621,7 @@ def risk_heatmap(ds: str, window: int = 10, top: int = Query(20, ge=1, le=200),
     a missing one, which is the same distinction the reject report draws for rows.
     """
     inv = _analyze(ds, window)
-    ranked = sorted(inv.risk.values(), key=lambda r: -r["risk_score"])
+    ranked = sorted(inv.risk.values(), key=_risk_rank)
     rows = [r for r in ranked if r.get("rule_flags")][:top]
     columns = sorted({f["rule"] for r in rows for f in r["rule_flags"]})
 

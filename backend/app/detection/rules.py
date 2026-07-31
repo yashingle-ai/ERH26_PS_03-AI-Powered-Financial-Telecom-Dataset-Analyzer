@@ -59,9 +59,15 @@ def mule_account(feats, cfg):
     flags = []
     for eid, f in feats.items():
         if f["fan_in"] >= r["min_fan_in"] and f["max_rapid_forward"] >= r["min_forwarded_pct"]:
+            # Say when the evidence is counterparty-side. A flag on an account whose own
+            # statement we hold and one inferred from someone else's transfers are different
+            # strengths of finding, and an analyst has to be able to tell them apart.
+            basis = (" (from counterparty-side transfers; this account's own statement is "
+                     "not in the case)" if f.get("from_transfers_only") else "")
             flags.append({"entity_id": eid, "rule": "mule_account", "weight": r["weight"],
                           "detail": f"fan-in={f['fan_in']} with "
-                                    f"{f['max_rapid_forward']*100:.0f}% rapid forwarding"})
+                                    f"{f['max_rapid_forward']*100:.0f}% rapid forwarding"
+                                    f"{basis}"})
     return flags
 
 
@@ -193,12 +199,52 @@ def layering(transfers, cfg):
 
 
 def call_transfer_coincidence(feats, cfg):
+    """Fires on a call+transfer coincidence, with or without an overlapping IP session.
+
+    Counting STRONG only meant this rule — named for the pair, not the triple — could never
+    fire while STRONG was 0, which it is on both real cases: 7,358 eligible entities, 0 fired.
+
+    The two tiers are not equal evidence and are not weighted equally. A MEDIUM hit is the
+    same call+transfer pair with no corroborating IP session, so a MEDIUM-only entity carries
+    `medium_weight` (default half). Measured on the demo set, firing on MEDIUM at all takes
+    this rule's entity-level recall from 0.500 to 1.000 — it catches both ends of the call
+    rather than one — at a precision cost of 0.333 -> 0.200, which is the same range as the
+    committed `layering` (0.195) and above `rapid_in_out` (0.107).
+
+    Halving is an evidential judgement, not a measured suppression: at the full weight every
+    one of the 30 eligible demo entities received an identical +10.5, which carries no ranking
+    information. It does NOT change which entities change band — the same three cross into
+    medium either way, and all three already held three other typologies.
+
+    The detail states which tier produced the hit, so a MEDIUM coincidence is never read as a
+    decisive call+IP+transfer one.
+    """
     r = _enabled(cfg, "call_transfer_coincidence")
     if not r:
         return []
-    return [{"entity_id": eid, "rule": "call_transfer_coincidence", "weight": r["weight"],
-             "detail": f"{f['coincidence_count']} call+IP+transfer coincidence(s)"}
-            for eid, f in feats.items() if f["coincidence_count"] > 0]
+    # Default rather than require, so an existing config without the key keeps working —
+    # halved, not silently promoted to STRONG strength.
+    medium_weight = r.get("medium_weight", r["weight"] / 2)
+    out = []
+    for eid, f in feats.items():
+        strong = f.get("coincidence_count", 0)
+        medium = f.get("coincidence_medium_count", 0)
+        if not (strong or medium):
+            continue
+        weight = r["weight"]
+        if strong and medium:
+            detail = (f"{strong} call+IP+transfer and {medium} call+transfer "
+                      f"coincidence(s)")
+        elif strong:
+            detail = f"{strong} call+IP+transfer coincidence(s)"
+        else:
+            weight = medium_weight
+            detail = (f"{medium} call+transfer coincidence(s) with no overlapping IP "
+                      f"session — weaker tier, weighted {medium_weight:g} not "
+                      f"{r['weight']:g}")
+        out.append({"entity_id": eid, "rule": "call_transfer_coincidence",
+                    "weight": weight, "detail": detail})
+    return out
 
 
 def comm_burst(feats, cfg):
@@ -272,9 +318,52 @@ def eligibility_report(feats, transfers, cfg) -> list[dict]:
                 row["note"] = (f"noise floor lowered {configured:,.0f} -> {floor:,.0f} "
                                f"to match this case's scale")
         else:
-            row["eligible"] = len(feats)
+            row["eligible"] = _eligible_count(name, feats, r)
+            if row["eligible"] == 0 and row["fired"] == 0:
+                row["note"] = _INERT_NOTES.get(name)
         out.append(row)
     return out
+
+
+#: What each rule's own precondition is, independent of its firing threshold. `len(feats)` was
+#: used for these five, which is the entity count and tells an analyst nothing: on
+#: `fir-65-2024` `mule_account` reported 9,996 eligible and 0 fired, when the meaningful
+#: statement is that only a handful of entities have the fan-in the rule requires at all.
+#: Eligibility has to be the structural precondition, or "eligible" is a headcount wearing a
+#: diagnosis.
+_ELIGIBILITY: dict[str, object] = {
+    # fan-in is the structural half of the mule signature; forwarding is the behavioural half
+    "mule_account": lambda f, r: f["fan_in"] >= r.get("min_fan_in", 0),
+    # forwarding is only observable when money is seen arriving AND leaving
+    "rapid_in_out": lambda f, r: bool(f["credits"]) and bool(f["debits"]),
+    # a coincidence needs both legs present for the same entity
+    "call_transfer_coincidence": lambda f, r: bool(f["call_times"]) and (
+        bool(f["txn_times"]) or bool(f["credits"]) or bool(f["debits"])),
+    "comm_burst": lambda f, r: bool(f["call_times"]),
+    # a dormancy gap needs at least two transactions to measure between
+    "dormant_activation": lambda f, r: len(f["txn_times"]) >= 2,
+}
+
+#: Said when a rule has no eligible entity at all. This is a finding about the evidence, and
+#: it is the sentence that stops `fired=0` reading as "nothing suspicious here".
+_INERT_NOTES = {
+    "mule_account": "no entity reaches the required fan-in, so the typology's structural "
+                    "precondition does not occur in this case",
+    "rapid_in_out": "no entity is seen both receiving and sending, so forwarding cannot be "
+                    "observed — a one-hop view of the money trail",
+    "call_transfer_coincidence": "no entity holds both a call and a transaction, so no "
+                                 "coincidence is possible at any window",
+    "comm_burst": "no call records are attributed to any entity",
+    "dormant_activation": "no entity has two or more transactions to measure a gap between",
+}
+
+
+def _eligible_count(name: str, feats: dict, rule_cfg: dict) -> int:
+    """Entities meeting a rule's structural precondition, before its threshold applies."""
+    test = _ELIGIBILITY.get(name)
+    if test is None:
+        return len(feats)
+    return sum(1 for f in feats.values() if test(f, rule_cfg))
 
 
 def run_all(feats, transfers, cfg):

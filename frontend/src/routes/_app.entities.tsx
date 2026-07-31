@@ -246,7 +246,17 @@ function EntitiesPage() {
                 </div>
                 <div className="text-mono flex justify-between text-[10px] text-muted-foreground">
                   <span>Rule score · 70% weight</span>
-                  <span>ML anomaly · 30% ({(selected.mlScore * 100).toFixed(0)}%)</span>
+                  {/* An unfitted entity's 0.0 must not render as "0% anomalous". The forest is
+                      fitted only on entities holding records of their own, so for a subject seen
+                      only as somebody else's counterparty there is no profile to score — its
+                      risk comes from the rules alone, which is the defensible half anyway. */}
+                  {selected.mlScored ? (
+                    <span>ML anomaly · 30% ({(selected.mlScore * 100).toFixed(0)}%)</span>
+                  ) : (
+                    <span title="No records of this entity's own, so the anomaly model has no behavioural profile to score. Risk shown is from the rules only.">
+                      ML anomaly · not scored (no own records)
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
