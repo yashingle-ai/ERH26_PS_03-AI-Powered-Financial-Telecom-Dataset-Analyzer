@@ -24,6 +24,54 @@
 
 ## 2. Ingestion — coverage decisions
 
+### 2.0 "658 of 951 unrecognised" was measuring the wrong thing 🟡→🟢
+
+That figure counts **tables**. Measured by **rows** on the same build:
+
+| | `fir-65-2024` | `FIR-0006-2025 U` |
+|---|---|---|
+| rows claimed by a profile | **348,567 (95.6%)** | **732,565 (97.8%)** |
+| rows in unclaimed tables | 16,180 (4.4%) | 16,856 (2.2%) |
+
+The unclaimed tables average **24 rows**; the claimed ones hold thousands. So the headline overstates
+the gap by roughly twenty times.
+
+It also merged four outcomes that call for opposite responses. `ingestion/unrecognised.py` now
+classifies them — value-based, not filename-based, so the answer does not depend on the two case
+folders we happen to hold:
+
+| reason | `fir-65-2024` | `FIR-0006-2025 U` |
+|---|---|---|
+| `out_of_scope_no_canonical_field` | 482 tbl / **13,315** rows (82.3%) | 640 tbl / 6,330 rows (37.6%) |
+| `refused_officer_bearing` | 106 tbl / 787 rows (4.9%) | 337 tbl / **7,332** rows (43.5%) |
+| `reference_no_time_anchor` | 83 tbl / 2,078 rows (12.8%) | 94 tbl / 3,102 rows (18.4%) |
+| **`unread_parser_gap`** | **0 tbl / 0 rows** | **3 tbl / 92 rows (0.5%)** |
+
+**Across both cases the genuine parser gap is 3 tables and 92 rows — 0.008% of the 1,114,168 rows
+parsed.** FR-4 is not a parser problem.
+
+What the other three are. The largest single unclaimed table on `fir-65-2024` is a **CCTV log —
+11,275 rows, 70% of everything unclaimed there** — not Bank, CDR or IPDR, and no profile should ever
+claim it. On `FIR-0006-2025 U` the biggest tranche is **officer-bearing NCCRP registers, 337 tables**:
+the `master - Copy.xlsx` shape, refused *on purpose*, because linking it would have merged 32 mule
+accounts into ~98 police entities. Its second largest single block is WhatsApp `_chat.txt` (4,036
+rows), already a recorded scope decision. The no-time-anchor tranche — hold amounts, nominee details
+— is real bank data that cannot become events however well mapped, because there is nothing to place
+on a timeline.
+
+Only `unread_parser_gap` should ever drive new profile work, and reporting all four as one number
+invited building profiles for data that must not be claimed.
+
+**Caveat on the zero.** `unread_parser_gap` requires both a canonical field *and* a column that
+`value_typer._is_temporal` recognises. A table carrying an account and an amount alongside a date
+format the typer does not know would land in `reference_no_time_anchor` rather than in the gap. So
+the 0 is bounded by the typer's date coverage, not proof of completeness — it is strong evidence
+that the residue is not profile work, not a claim that nothing is left.
+
+`rows_in_unrecognised_tables` and `tables_by_source` keep their exact previous meaning, so every
+figure quoted before still compares. This is a companion field, per the rule against redefining a
+headline metric.
+
 | Item | Status | Decision and evidence |
 |---|---|---|
 | `.doc` (40 files) | 🔵 | All 40 verified genuine OLE2 by magic bytes — none mislabelled, so no cheap win. Contents are narrative police paperwork (case diaries, I4C mail, press notes, look-out notices, remand reports). **No financial tables.** Low value |

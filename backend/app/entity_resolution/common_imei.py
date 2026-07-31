@@ -126,6 +126,20 @@ def load_common_imei_links(input_dir: str, events: list[dict] | None = None) -> 
         if not path.is_file():
             continue
         name = path.name.lower()
+        # NARROW ON PURPOSE. Operators ship a whole `Common_*_Report` family in the same folder
+        # and the others are not identity evidence:
+        #
+        #   Common_IMEI_Report        Number=IMEI,    columns=MSISDN   -> identity. This one.
+        #   IPDR_-_Common_IMEI_Report Number=IMEI,    columns=session  -> identity. This one.
+        #   Common_A_B_Report         Number=MSISDN,  columns=MSISDN   -> a COMMS edge, and its
+        #       Number column also carries SMS sender IDs (`VG-ViCARE`), which are not subscribers.
+        #       Two A-parties sharing a B-party says nothing about who owns what.
+        #   Common_First_Cell_ID_*    Number=CELL ID, columns=MSISDN   -> a LOCATION edge. Merging
+        #       a tower into a phone entity would fuse every handset that ever used that cell.
+        #
+        # Matching `common_*_report` instead of `common_imei` looks like five free files and is in
+        # fact rule 3 — fabricating identity links. Widen this only with the column semantics of
+        # the new report established first; `test_common_imei_refuses.py` pins the refusals.
         if "common_imei" not in name and "common imei" not in name:
             continue
         if path.suffix.lower() not in {".xlsx", ".xls", ".csv"}:

@@ -29,7 +29,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.app.ingestion import service as ingestion  # noqa: E402
-from backend.app.ingestion import structure, value_typer  # noqa: E402
+from backend.app.ingestion import structure, unrecognised, value_typer  # noqa: E402
 from backend.app.normalization import service as normalization  # noqa: E402
 
 
@@ -115,6 +115,11 @@ def measure(input_dir: str, include_pdf: bool = True) -> dict:
         "records_parsed": sum(len(pf.records) for pf in parsed),
         "rows_in_unrecognised_tables": sum(
             len(pf.records) for pf in parsed if not pf.source_type),
+        # Companion to the two figures above, not a replacement (rule 5): "671 unrecognised" is a
+        # headcount that mixes a CCTV log no profile should claim, an officer-bearing register
+        # refused on purpose, real bank data with no timestamp, and the actual parser gap. Only
+        # the last of those should drive new profile work.
+        "unrecognised_by_reason": unrecognised.summarise(parsed),
         "value_inferred_tables": sum(1 for pf in parsed if pf.value_map),
         "events": len(events),
         "events_by_type": dict(Counter(e["event_type"] for e in events)),

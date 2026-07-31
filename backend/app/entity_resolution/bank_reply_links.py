@@ -53,15 +53,20 @@ from ..normalization import normalizers as nz
 
 log = get_logger(__name__)
 
-#: Off by default. This creates identity merges, so it must be switchable from the environment:
-#: both arms of the FR-9 window sweep then run the same build and any moved STRONG count is
-#: attributable to the links and nothing else. Attributing a change by run timestamp is a trap
-#: this project has already paid for once.
+#: **On by default**, and still switchable. It began off because it creates identity merges and
+#: both arms of the FR-9 window sweep had to run one build — attributing a change by run timestamp
+#: is a trap this project has already paid for. That sweep is now done, all three safety checks
+#: passed (§4.1), and the links are a measured improvement: `account+phone` entities 2 -> 30 and
+#: MEDIUM coincidences 6 -> 11 on `fir-65-2024`, with the first hits ever at W=1. Leaving it off
+#: would be the F1/F3 mistake again — a thing built, validated, and then not reachable.
+#:
+#: The flag stays so `ERAKSHAK_BANK_REPLY_LINKS=0` restores the pre-link baseline for any future
+#: A/B, and so a case whose replies turn out to be untrustworthy can be run without them.
 _FLAG = "ERAKSHAK_BANK_REPLY_LINKS"
 
 
 def enabled() -> bool:
-    return os.getenv(_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv(_FLAG, "1").strip().lower() in {"1", "true", "yes", "on"}
 
 #: Header vocabulary. Transliterations are in the comments so a reviewer who does not read
 #: Gujarati can audit the match, which matters for a module that creates identities.

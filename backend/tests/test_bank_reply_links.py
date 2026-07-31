@@ -164,27 +164,39 @@ def test_an_unreadable_docx_does_not_stop_the_others(tmp_path):
 
 # ── the flag ────────────────────────────────────────────────────────────────────────
 
-def test_the_feature_is_off_unless_the_flag_is_set(monkeypatch):
-    """Off by default because it creates merges, and switchable so both arms of the window sweep
-    run the same build. Attributing a change by run timestamp is a trap already paid for here."""
+def test_the_feature_is_on_by_default_and_can_be_switched_off(monkeypatch):
+    """On by default now the sweep is done and all three checks passed: leaving a validated
+    bridge unreachable is the F1/F3 mistake. Still switchable, so `=0` restores the pre-link
+    baseline for a future A/B, or runs a case whose replies prove untrustworthy."""
     monkeypatch.delenv(brl._FLAG, raising=False)
-    assert brl.enabled() is False
+    assert brl.enabled() is True, "a validated bridge must not need an env var to work"
     for v in ("1", "true", "YES", "on"):
         monkeypatch.setenv(brl._FLAG, v)
         assert brl.enabled() is True
+    for v in ("0", "false", "no", "off"):
+        monkeypatch.setenv(brl._FLAG, v)
+        assert brl.enabled() is False, f"{v!r} must disable it"
+
+
+def test_the_pipeline_actually_calls_the_reader(monkeypatch, tmp_path):
+    """The reader can be right and still be unreachable — F1 and F3 were both built and unplugged,
+    and the eligibility report sat fully tested with nothing calling it. Assert the wiring, not
+    just the module."""
+    import inspect
+
+    from backend.app import pipeline
+    src = inspect.getsource(pipeline.run_base)
+    assert "er_bank_reply.enabled()" in src, "the flag must be consulted in the pipeline"
+    assert "er_bank_reply.load_bank_reply_links(input_dir)" in src, "and the reader called"
+
+
+def test_disabling_the_flag_stops_the_pipeline_loading_links(monkeypatch, tmp_path):
+    """`=0` has to genuinely restore the pre-link baseline, or a future A/B is meaningless."""
+    _write(tmp_path, "reply.docx", HEAD, _rows(2))
     monkeypatch.setenv(brl._FLAG, "0")
     assert brl.enabled() is False
-
-
-def test_the_pipeline_respects_the_flag(monkeypatch, tmp_path):
-    """The reader can be right and still be unreachable — F1 and F3 were both built and unplugged."""
-    from backend.app import pipeline
-    _write(tmp_path, "reply.docx", HEAD, _rows(2))
-    monkeypatch.delenv(brl._FLAG, raising=False)
-    assert brl.enabled() is False
-    monkeypatch.setenv(brl._FLAG, "1")
-    assert brl.enabled() is True
-    assert "er_bank_reply" in pipeline.__dict__ or hasattr(pipeline, "er_bank_reply")
+    # the reader itself still works when called directly; it is the pipeline gate that is off
+    assert len(brl.load_bank_reply_links(str(tmp_path))) == 2
 
 
 @pytest.mark.parametrize("head", [
