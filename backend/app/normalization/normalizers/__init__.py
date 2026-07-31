@@ -15,6 +15,11 @@ from dateutil import parser as dtparser
 
 from ...core import config
 
+# `ascii_digits` guards the entry of every identifier and amount normaliser below. It lives in
+# `core` because `ingestion.value_typer` needs the same one and had its own copy — which is
+# exactly how half of this fix got missed the first time.
+from ...core.text import ascii_digits, digits_only
+
 IST = timezone(timedelta(hours=5, minutes=30))
 UTC = timezone.utc
 _TZOFFSETS = {"IST": 19800}  # seconds
@@ -43,7 +48,7 @@ def _to_canonical(dt: datetime | None, source_tz: str) -> datetime | None:
 def phone(value) -> str | None:
     if value is None:
         return None
-    digits = re.sub(r"\D", "", str(value))
+    digits = re.sub(r"\D", "", ascii_digits(value))
     if not digits:
         return None
     if digits.startswith("91") and len(digits) == 12:
@@ -151,7 +156,9 @@ def account_no(value) -> str | None:
     """
     if value is None:
         return None
-    s = str(value).strip()
+    # Digits normalised to ASCII first: ACCOUNT_NO is a merge key, so the same account written
+    # in Gujarati numerals in an affidavit and in ASCII on the statement must produce one key.
+    s = ascii_digits(value).strip()
     if not s:
         return None
     s = s.splitlines()[0].strip()
@@ -159,8 +166,8 @@ def account_no(value) -> str | None:
     return s or None
 
 
-def _digits(v) -> str:
-    return re.sub(r"\D", "", str(v)) if v is not None else ""
+#: Kept as a module-local name because callers across the codebase already import it.
+_digits = digits_only
 
 
 def _parse_date_naive(value) -> datetime | None:
@@ -213,11 +220,41 @@ def combine_date_time(date_val, time_val, source_tz: str = "IST") -> datetime | 
         return _to_canonical(d, source_tz)
 
 
+#: Currency tokens removed **with any trailing dot**, before the character filter runs. Latin
+#: `Rs.`/`INR.`, the rupee sign, and the Gujarati (રૂ) and Devanagari (रु) abbreviations.
+_CURRENCY = re.compile(r"(?i)(?:\brs\b|\binr\b|₹|રૂ|रु)\.?\s*")
+#: The Indian "rupees only" terminator, e.g. `75,00,000/-`.
+_RUPEES_ONLY = re.compile(r"/\s*-?\s*$")
+
+
 def amount(value) -> float | None:
+    """Parse a money cell to float, or None if the magnitude cannot be established.
+
+    `Rs.75,00,000` used to return **0.75**. The character filter kept the dot belonging to
+    `Rs.` and dropped the grouping commas, leaving `.7500000`, which `float()` reads as a
+    fraction — a ₹75-lakh transfer recorded as 75 paise, silently, with no reject entry and
+    nothing anywhere to indicate a problem. It fed `total_in`, the `structuring` band test,
+    `layering`'s minimum-amount floor, the risk score and the STR alike.
+
+    Not a Gujarati-specific fault — Latin `Rs.` did exactly the same — but it surfaced while
+    auditing Gujarati handling, because the police affidavits write `રૂ.૭૫,૦૦,૦૦૦/-`. The
+    `/-` variant at least failed loudly and returned None; the bare `Rs.` form did not.
+
+    Refusing is the correct failure here. A None becomes a visible reject; a wrong magnitude
+    does not, and there is no way for a reader downstream to tell 0.75 from a real 0.75.
+    """
     if value is None or value == "":
         return None
-    s = re.sub(r"[^\d.\-]", "", str(value))
+    s = ascii_digits(value).strip()
+    s = _CURRENCY.sub("", s)
+    s = _RUPEES_ONLY.sub("", s).strip()
+    s = re.sub(r"[^\d.\-]", "", s)
     if s in ("", "-", "."):
+        return None
+    # A leading separator is the signature of exactly the corruption above, not a fraction:
+    # amounts in this data are written `0.75`, never `.75`. If one still reaches here the
+    # input is in a form this function has not been taught, and the magnitude is unknown.
+    if s.startswith("."):
         return None
     try:
         return float(s)

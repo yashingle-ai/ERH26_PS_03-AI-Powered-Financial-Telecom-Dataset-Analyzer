@@ -40,9 +40,61 @@
 | `field_mapper.py` | 🟢 | Non-empty beats empty, first-declared alias wins. Fixed `pstd_dt` overwriting `Tran_Date` |
 | `normalizers` — timestamps | 🟢 | IST canonical; SAS `11DEC2019:09:07:02`, NCRP `HR:/MIN:/AM-PM`, time-only hazard closed |
 | `normalizers` — phone / amount / account | 🟢 | E.164, quote-stripping, `-:` prefix cleaning |
+| **Indic numerals** | 🟢 **fixed 31 Jul** | `\d` is Unicode-aware, so Gujarati ૦-૯ passed every digit test and was never converted. See §3.1 |
+| **`Rs.` prefixed amounts** | 🟢 **fixed 31 Jul** | `Rs.75,00,000` returned **0.75**. See §3.1 |
 | Dr/Cr orientation | 🟢 | Follows the **balance delta**, not column order. Decided alphabetically it inverted every direction in one file |
 | `validation.check_balances` | 🟢 | 31 accounts with ledger breaks flagged on FIR 65-2024 |
 | Duplicate event dedupe | 🟢 | Keys on the full session tuple; collapsing concurrent IP sessions was losing evidence |
+
+### 3.1 Gujarati was never deliberately handled — audit of 31 Jul 🔴→🟢
+
+**73% of the files in `FIR-0006-2025 U`** carry Gujarati in their path (921 of 1,268), including
+342 PDFs, 114 xlsx and 110 csv; on `FIR 65-2024` it is 126 of 646. No part of the pipeline had
+ever been tested against the script. Two defects, one of them severe:
+
+| Defect | Why it was invisible |
+|---|---|
+| `phone()`, `account_no()` and the column typer's `_digits` **kept non-ASCII digits** | `\d` in a `str` pattern is Unicode-aware, so `re.sub(r"\D", "", …)` treats ૦-૯ as digits and *keeps* them. Every "is this a digit" test passed while the value was never converted, and `phone()` returned `+91૯૮૭૬૫૪૩૨૧૦` — well-formed-looking E.164 that can never compare equal to its ASCII twin |
+| `amount("Rs.75,00,000")` returned **0.75** | The dot belonging to `Rs.` survived the character filter while the grouping commas did not, leaving `.7500000`, which `float()` reads as a fraction |
+
+**PHONE, ACCOUNT_NO and IMEI are all merge keys.** So one person written both ways became two
+entities and the link was simply absent — no reject entry, nothing to read. A missed identity link
+must not be quieter than a fabricated one, which is what rule 3 exists to police in the other
+direction. The amount defect is worse still: a ₹75-lakh transfer recorded as **75 paise**,
+silently, feeding `total_in`, the `structuring` band test, `layering`'s minimum-amount floor, the
+risk score and the STR alike. It is **not Gujarati-specific** — Latin `Rs.` did exactly the same —
+but it surfaced only because the police documents write `રૂ.૭૫,૦૦,૦૦૦/-`. The `/-` variant failed
+loudly and returned None; the bare `Rs.` form did not.
+
+Fixed with one shared `core.text.ascii_digits` covering nine Indian scripts plus Arabic-Indic and
+fullwidth digits, enumerated by block so an auditor can read which scripts are accepted rather
+than trusting a Unicode category scan. `value_typer` had its **own** copy of `_digits`, which is
+how half the fix got missed the first time — both layers now resolve to the shared function, and
+a test asserts they are the same object.
+
+`_luhn_ok` was computing `ord(ch) - 48` across non-ASCII codepoints, so `_is_imei` and `_is_amount`
+had been *accepting* Gujarati columns purely because their remaining tests are length-based —
+right answer for the wrong reason, with a checksum derived from nonsense.
+
+**Measured effect: +1 transaction on `FIR-0006-2025 U`, and nothing at all on `fir-65-2024`**
+(events 247,492 in both arms). high 2 → 2, top score 85.5 → 85.5, 0 band changes, 0 rule-set
+changes.
+
+So: correct fixes, one row of yield. Stated plainly because the size of the audit does not justify
+itself by its result. The reason is measured, not assumed — **the structured bank data is written
+in ASCII.** Across the 18 account-and-mobile tables in the police paperwork there are **522
+account numbers and 223 mobile numbers, and not one of them is in Gujarati digits.** The Gujarati
+numerals appear in narrative prose and in amounts, not in the identifier columns.
+
+The value that remains is latent rather than realised, and it is worth keeping for two reasons.
+The `Rs.` amount defect is **not script-specific** and would silently divide any dataset written
+that way by 10⁷ — the next case folder is a different police station with different conventions.
+And a merge key that silently accepts a non-ASCII digit fails by *splitting an identity*, which
+produces no reject entry and no visible symptom; it would have been found only by someone
+wondering why two entities looked like the same person.
+
+The identifier columns being blocked is a **separate** problem: those tables carry Gujarati
+*headers*, so no profile claims them at all. See §4.1.
 
 ## 4. Entity resolution
 
@@ -52,7 +104,55 @@
 | Merge keys `PHONE / ACCOUNT_NO / IMEI / IMSI` | 🔵 | **Decision: not extending to AADHAAR / PAN / GSTIN.** Simulated: 5 anchored Aadhaar, 30 PAN, 1 GSTIN in text sources → **1 entity merged**. Not worth three identifier types plus a PII policy |
 | Officer-phone veto (`has_admin_role_columns`) | 🟢 | 94 of 98 officers have one mobile vs 10 of 32 accounts. Prevents merging mule accounts into police entities |
 | Oversized-component circuit breaker | 🟢 | Fired correctly on `E03390` (3,045 identifiers, hub `PHONE +919702000558`) |
-| `account+phone = 3` | 🟢 | Genuine and small. The low number **is the guard working**, not a defect |
+| `account+phone = 3` | 🟡 **see §4.1** | The low number is the officer-phone guard working. But **255 genuine account↔mobile pairs are sitting in the case folders unread**, blocked by Gujarati headers |
+
+### 4.1 The FR-9 bridge is already in the evidence, behind a Gujarati header ⚪
+
+FR-9 has been the only red on the scorecard since the start: STRONG correlation needs one entity
+holding both a transaction and a call, and both cases have hundreds of thousands of each — with no
+evidence tying an account to a handset. `account+phone = 3`. The recorded next step has been *"the
+narrowest unblock is five KYC rows from the case officer"*.
+
+Those rows do not need to be requested. **They are in the case folder**, in `.docx` tables with a
+stable five-column schema that recurs across both cases:
+
+| `અ.નં.` | `બેંક એકાઉન્ટ નંબર` | `એકાઉન્ટ ધારકનું નામ સરનામુ` | `રજીસ્ટર મોબાઇલ નંબર` | `રજીસ્ટર ઇ-મેઇલ આઇડી` |
+|---|---|---|---|---|
+| s.no | **bank account number** | account holder name + address | **registered mobile number** | registered e-mail id |
+
+Measured across both cases (`census_guj_bridge.py`, read-only):
+
+| | tables | rows | account numbers | mobile numbers |
+|---|---|---|---|---|
+| `fir-65-2024` | 6 | 175 | — | — |
+| `FIR-0006-2025 U` | 10 | 80 | — | — |
+| **both, combined** | **18** | **303** | **522** | **223** |
+
+All values are **ASCII** — 0 in Gujarati digits — so the numeral work in §3.1 does not reach them.
+The single blocker is that `field_mapper` matches English aliases, so a table headed
+`બેંક એકાઉન્ટ નંબર` scores zero against every profile and lands in the unrecognised pile.
+
+**Why this is the right kind of evidence, and why it is not being acted on unilaterally.** These
+are *bank replies* to a legal-process request: the bank stating which mobile is registered against
+which account. That is KYC of the strongest available provenance, and precisely the class the
+`entity_map` link mechanism was built to consume — the reader and the link-event path already
+exist. It is not the affidavit's narrative allegation, which would be a different and weaker thing.
+
+But it creates identity links, and that is the one area where this project has already come closest
+to a serious error: a reference table was very nearly used to merge 32 mule accounts into ~98
+police entities, caught only by measuring that its `Mobile Number` column held the *investigating
+officer's* number. Before any of these 303 rows becomes a merge, three things have to be checked:
+
+1. **Officer contamination** — do any of the 223 mobiles appear in the officer roster that
+   triggered `has_admin_role_columns`? One overlap invalidates the batch.
+2. **Cardinality** — a real KYC pairing is near one-to-one. An account with many mobiles, or a
+   mobile against many accounts, is a bank-branch contact or a data-entry artefact, not a holder.
+3. **Whether it actually unblocks FR-9** — a bridge only helps if the bridged phone has CDR
+   activity *and* the bridged account has transactions in the same window. That has to be measured,
+   not assumed, exactly as the window sweep was.
+
+Recorded as an evidence-only finding pending that check. This is FR-9, the flagship, and a wrong
+merge here fabricates an identity link — rule 3 — in the requirement most likely to be relied on.
 
 ## 5. Correlation
 

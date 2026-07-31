@@ -46,6 +46,8 @@ import os
 import re
 from difflib import SequenceMatcher
 
+from ..core.text import digits_only
+
 
 def enabled() -> bool:
     """Value-based inference can be switched off with ERAKSHAK_VALUE_TYPING=0.
@@ -178,11 +180,13 @@ _DIRECTION_WORDS = {
     "credit", "call-in", "call-out", "voice", "sms", "data",
 }
 
-_DIGITS = re.compile(r"\D")
-
-
-def _digits(value: str) -> str:
-    return _DIGITS.sub("", value)
+#: The shared one, not a second copy. This module had its own `re.sub(r"\D", "", value)`, and
+#: because `\d` is Unicode-aware it kept Gujarati ૦-૯ — so `_is_phone` rejected a perfectly good
+#: Gujarati mobile number (`d[0] in "6789"` cannot match ૯), while `_is_imei` and `_is_amount`
+#: *accepted* Gujarati columns purely because their tests are length-based. Right answer for the
+#: wrong reason, which is worse than a failure: `_luhn_ok` then ran `ord(ch) - 48` over
+#: non-ASCII codepoints and computed a checksum from nonsense.
+_digits = digits_only
 
 
 def _luhn_ok(num: str) -> bool:
