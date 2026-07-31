@@ -73,9 +73,11 @@ frontend/dist/
 # hardcoded in one. Scratch that names evidence is evidence.
 artifacts/
 
-# Working notes derived from case evidence. `DECISIONS.md` carried live MSISDNs, IMEIs and
-# IMSIs from the FIR IPDR, which is exactly what rule 4 forbids in git. Untracked rather than
-# deleted: the notes are useful, they just must not be committed. Remove this entry only after
-# the identifiers in them have been redacted.
-docs/yash development/
+# `docs/yash development/` is the teammate onboarding entry point and IS tracked. It was briefly
+# untracked on 31 Jul because DECISIONS.md carried live MSISDNs, IMEIs and IMSIs from the FIR
+# IPDR — rule 4. Those are now redacted (the argument never needed the values, only that all six
+# appear in zero files outside `ipdr/`), so the folder is tracked again.
+#
+# Before committing anything in it, sweep for identifiers:
+#   grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" "docs/yash development/"*.md
 docs/gaps_in_current_system.MD
