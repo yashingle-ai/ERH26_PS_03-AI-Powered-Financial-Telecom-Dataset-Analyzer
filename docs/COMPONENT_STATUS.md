@@ -82,9 +82,14 @@ changes.
 
 So: correct fixes, one row of yield. Stated plainly because the size of the audit does not justify
 itself by its result. The reason is measured, not assumed — **the structured bank data is written
-in ASCII.** Across the 18 account-and-mobile tables in the police paperwork there are **522
-account numbers and 223 mobile numbers, and not one of them is in Gujarati digits.** The Gujarati
-numerals appear in narrative prose and in amounts, not in the identifier columns.
+in ASCII.** Across the 18 account-and-mobile tables in the police paperwork, **47 distinct accounts
+and 56 distinct mobiles, and not one of them is in Gujarati digits.** The Gujarati numerals appear
+in narrative prose and in amounts, not in the identifier columns that feed merge keys.
+
+They are not absent from the corpus, though: across the wider document class there are roughly
+**60 MSISDNs written in Gujarati numerals** (§4.2), each one a phone nothing could match before
+this fix. They are unreachable for a *different* reason — the documents holding them are not
+mapped at all — so the fix is a precondition for that work rather than a beneficiary of it.
 
 The value that remains is latent rather than realised, and it is worth keeping for two reasons.
 The `Rs.` amount defect is **not script-specific** and would silently divide any dataset written
@@ -104,7 +109,7 @@ The identifier columns being blocked is a **separate** problem: those tables car
 | Merge keys `PHONE / ACCOUNT_NO / IMEI / IMSI` | 🔵 | **Decision: not extending to AADHAAR / PAN / GSTIN.** Simulated: 5 anchored Aadhaar, 30 PAN, 1 GSTIN in text sources → **1 entity merged**. Not worth three identifier types plus a PII policy |
 | Officer-phone veto (`has_admin_role_columns`) | 🟢 | 94 of 98 officers have one mobile vs 10 of 32 accounts. Prevents merging mule accounts into police entities |
 | Oversized-component circuit breaker | 🟢 | Fired correctly on `E03390` (3,045 identifiers, hub `PHONE +919702000558`) |
-| `account+phone = 3` | 🟡 **see §4.1** | The low number is the officer-phone guard working. But **255 genuine account↔mobile pairs are sitting in the case folders unread**, blocked by Gujarati headers |
+| `account+phone = 3` | 🟡 **see §4.1** | The low number is the officer-phone guard working. But **61 genuine account↔mobile pairs sit in the case folders unread**, blocked by Gujarati headers — 15 of them usable, all three safety checks passed |
 
 ### 4.1 The FR-9 bridge is already in the evidence, behind a Gujarati header ⚪
 
@@ -120,17 +125,40 @@ stable five-column schema that recurs across both cases:
 |---|---|---|---|---|
 | s.no | **bank account number** | account holder name + address | **registered mobile number** | registered e-mail id |
 
-Measured across both cases (`census_guj_bridge.py`, read-only):
+Measured across both cases, **deduplicated** (`probe_bridge_checks.py`, read-only):
 
-| | tables | rows | account numbers | mobile numbers |
+| | tables | distinct accounts | distinct mobiles | distinct pairs |
 |---|---|---|---|---|
-| `fir-65-2024` | 6 | 175 | — | — |
-| `FIR-0006-2025 U` | 10 | 80 | — | — |
-| **both, combined** | **18** | **303** | **522** | **223** |
+| `fir-65-2024` | 8 | 29 | 33 | — |
+| `FIR-0006-2025 U` | 10 | 18 | 23 | — |
+| **both, combined** | **18** | **47** | **56** | **61** |
+
+**Correction to a figure quoted earlier in this work:** "522 account numbers and 223 mobile
+numbers" were *occurrence counts of digit runs anywhere in the row* — including IFSC codes,
+addresses and the digits inside e-mail addresses — and the same tables are duplicated across
+several `.docx` copies. Extracting from the account and mobile **columns** and deduplicating gives
+**47 accounts and 56 mobiles in 61 pairs**. An order of magnitude smaller. Still material against
+an `account+phone` count of 3, but the honest number is 61, not 303.
 
 All values are **ASCII** — 0 in Gujarati digits — so the numeral work in §3.1 does not reach them.
 The single blocker is that `field_mapper` matches English aliases, so a table headed
 `બેંક એકાઉન્ટ નંબર` scores zero against every profile and lands in the unrecognised pile.
+
+**Check 1 — officer contamination: PASSES.** Across both cases the admin-role guard identifies
+**299 tables** carrying officer/handler columns, holding **1,449 distinct officer mobiles**. Of the
+56 bridge mobiles, **0 appear among them.** This is the exact check that disqualified
+`master - Copy.xlsx`, and this batch is clean.
+
+**Check 2 — cardinality: PASSES, with the right shape.** Real KYC is near one-to-one:
+
+| | 1 | 2 | 3 |
+|---|---|---|---|
+| mobiles per account | **36** | 8 | 3 |
+| accounts per mobile | **51** | 5 | — |
+
+36 of 61 pairs are strictly one-to-one; the worst fan-out is 3. Contrast the rejected officer
+table, where 94 of 98 officers had exactly one mobile but only **10 of 32 accounts** did — the
+signature of a shared contact column. Here it is inverted, which is the holder signature.
 
 **Why this is the right kind of evidence, and why it is not being acted on unilaterally.** These
 are *bank replies* to a legal-process request: the bank stating which mobile is registered against
@@ -141,18 +169,87 @@ exist. It is not the affidavit's narrative allegation, which would be a differen
 But it creates identity links, and that is the one area where this project has already come closest
 to a serious error: a reference table was very nearly used to merge 32 mule accounts into ~98
 police entities, caught only by measuring that its `Mobile Number` column held the *investigating
-officer's* number. Before any of these 303 rows becomes a merge, three things have to be checked:
+officer's* number. So three checks were run before proposing any merge. **All three pass.**
 
-1. **Officer contamination** — do any of the 223 mobiles appear in the officer roster that
-   triggered `has_admin_role_columns`? One overlap invalidates the batch.
-2. **Cardinality** — a real KYC pairing is near one-to-one. An account with many mobiles, or a
-   mobile against many accounts, is a bank-branch contact or a data-entry artefact, not a holder.
-3. **Whether it actually unblocks FR-9** — a bridge only helps if the bridged phone has CDR
-   activity *and* the bridged account has transactions in the same window. That has to be measured,
-   not assumed, exactly as the window sweep was.
+**Check 3 — does it actually unblock FR-9?** A bridge only helps if merging the two sides produces
+an entity holding a transaction *and* a call *and* an IP session, which is the STRONG precondition
+that has been unsatisfiable at every window from 1 to 60 minutes. Measured per pair against
+`run_base` output (`probe_bridge_effect.py`):
 
-Recorded as an evidence-only finding pending that check. This is FR-9, the flagship, and a wrong
-merge here fabricates an identity link — rule 3 — in the requirement most likely to be relied on.
+| | `fir-65-2024` | `FIR-0006-2025 U` |
+|---|---|---|
+| pairs with both sides resolved | 8 | 7 |
+| already the same entity | **0** | **0** |
+| would merge two distinct entities | 8 | 7 |
+| merge yields TRANSACTION + CALL | 7 | 7 |
+| **merge yields TRANSACTION + CALL + IP** | **4** | **0** |
+
+`already_same_entity = 0` in both cases: not one of these pairs is redundant with what the pipeline
+already knows. Every usable pair is new information, and 15 links against a current `account+phone`
+count of **3** is a fivefold increase in the scarcest link type in the model.
+
+**The honest limit on the 4.** Holding all three event types is *necessary but not sufficient* for a
+STRONG hit — the three events must also fall inside the correlation window. **4 is an upper bound on
+new STRONG candidates, not a prediction of 4 hits**, and the window sweep already showed the timing
+here is tight (MEDIUM only reaches 6 as W widens to 60). The next measurement is the sweep re-run
+with the links applied; anything claimed before that is a guess.
+
+`FIR-0006-2025 U` yields **0** for a reason already on record rather than a failure of the bridge:
+that case carries no telecom IPDR at all, and its 202 IP sessions are all Google legal-process HTML.
+With almost no IP evidence, no merge can produce the third leg.
+
+This is FR-9, the flagship and the only remaining red, and a wrong merge here fabricates an identity
+link — rule 3 — in the requirement most likely to be relied on. The checks pass, so the proposal is
+sound; it is recorded rather than implemented because the merge itself is the user's call.
+
+### 4.2 The Gujarati police documents, explored as a class ⚪
+
+150 `.docx` documents across both cases, classified by their **own text** rather than by filename
+(staging mangles Gujarati filenames into `એફ_ડ_વ_ટ`). Corrected identifier totals — an earlier pass
+reported `IMSI: 0`, which was a probe artefact: the label regex allowed only ASCII between `IMSI`
+and the digits, and these documents write `IMSI નં. 404…`.
+
+| Table form | tables | What it is | Reachable today |
+|---|---|---|---|
+| **2 columns, 10+ rows** | **8** (378 rows) | Key-value statutory forms. **Six are the same 53-row bail affidavit template, one per accused** | 🔴 read as a table whose "header row" is a question and its answer |
+| 3+ columns | 435 | Record tables — the bank replies of §4.1, seized-property schedules, cheque-book lists | 🟡 partially; Gujarati headers block the rest |
+| 1 column | 19 | Layout | n/a |
+
+**36 of the 150 documents carry their evidence in prose only** — no tables at all — so a table
+reader cannot see them whatever the headers say. Between them the prose holds 103 IFSC codes, 98
+MSISDNs, 88 UPI IDs and 483 Gujarati-numeral amounts in the `notice_yadi` class alone.
+
+Across the whole class: **33 distinct IMEIs**, 1 IMSI, roughly **60 MSISDNs written in Gujarati
+numerals** (which §3.1 can now normalise, and which nothing could match before), and **300+
+explicit `(SECOND LAYER)` / `(THIRD LAYER)` annotations** — the investigating officer's own
+layering determination, written beside the account it applies to.
+
+**The 53-row affidavit is a key-value form, not a record table.** Confirmed by structure: one
+affidavit is a single 53×2 table holding **16,526 characters against 939 in its paragraphs**. Each
+row is `(૧) label | value`, numbered (૧) through (૪૧), and the values are prose with identifiers
+embedded — *"Kalupur A/C 04310112135 is in the name of the applicant/accused …"*, alongside seized
+SIM, debit-card, cheque-book and handset schedules that pair an accused with an IMEI and an MSISDN.
+
+Nothing in the pipeline reads a vertical key-value layout from a Word table. The closest existing
+machinery is `structure.document_preamble` / `_promote_embedded_fields`, which does exactly this for
+PDF header blocks — so the shape is precedented, but the reader does not exist.
+
+**Recommendation, and it is deliberately not what the size of the prize suggests.** These documents
+are the officer's *narrative case theory*: an allegation in a legal filing, not a bank's record.
+Their provenance is categorically weaker than the §4.1 bank replies, and feeding them into
+`node_to_entity` would let an assertion become a merge — which is what rule 3 forbids, and the
+precise failure the officer-phone veto exists to prevent. The defensible use is:
+
+1. **Index them for search (FR-15)**, so an analyst asking "which document mentions this account"
+   gets an answer. High value, zero identity risk, no new merge keys.
+2. **Surface the layer annotations as attributed context** on an entity — *"asserted THIRD LAYER in
+   \<document\>"* — never as a derived finding.
+3. **Do not merge identities from them.** The §4.1 bank replies are the right source for that, and
+   they have now passed both safety checks.
+
+Sizing note for (1): 36 prose-only documents plus 8 key-value forms is the whole seam — 44
+documents. That is small enough to be worth doing well and too small to justify a general-purpose
+Gujarati NLP layer.
 
 ## 5. Correlation
 
