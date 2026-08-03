@@ -169,16 +169,26 @@ def test_mixed_batch_reports_every_file(client, auth, sandbox):
 def test_upload_invalidates_the_analyze_cache(client, auth, sandbox, monkeypatch):
     """Stale memoised results would report figures predating the upload."""
     from backend.app.api import main
-    calls = {"n": 0}
-    monkeypatch.setattr(main._analyze, "cache_clear", lambda: calls.__setitem__("n", calls["n"] + 1))
+    calls = {"n": 0, "datasets": []}
+
+    def clear(dataset=None):
+        calls["n"] += 1
+        calls["datasets"].append(dataset)
+
+    monkeypatch.setattr(main._analyze, "cache_clear", clear)
     client.post("/v1/upload/case8", files=[_csv()], headers=auth)
     assert calls["n"] == 1
+    # Upload clears the durable snapshot for that dataset, not every key.
+    assert calls["datasets"] == ["case8"]
 
 
 def test_rejected_only_batch_does_not_clear_cache(client, auth, sandbox, monkeypatch):
     from backend.app.api import main
     calls = {"n": 0}
-    monkeypatch.setattr(main._analyze, "cache_clear", lambda: calls.__setitem__("n", calls["n"] + 1))
+    monkeypatch.setattr(
+        main._analyze, "cache_clear",
+        lambda dataset=None: calls.__setitem__("n", calls["n"] + 1),
+    )
     client.post("/v1/upload/case9",
                 files=[("files", ("x.exe", io.BytesIO(b"MZ"), "application/octet-stream"))],
                 headers=auth)

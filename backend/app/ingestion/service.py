@@ -570,7 +570,8 @@ def _parse_one(p: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool
 
 
 def parse_directory(root: str, include_pdf: bool = True,
-                    skipped_out: list[dict] | None = None) -> list[ParsedFile]:
+                    skipped_out: list[dict] | None = None,
+                    on_progress=None) -> list[ParsedFile]:
     """Parse every supported file under a directory tree (bank/, cdr/, ipdr/).
 
     `include_pdf=False` skips PDFs entirely — use for large real-case folders where the
@@ -578,6 +579,9 @@ def parse_directory(root: str, include_pdf: bool = True,
 
     ZIP archives are expanded into a scratch directory and their contents parsed too — on
     real cases most structured evidence arrives sealed inside (often nested) archives.
+
+    `on_progress(done, total, name)` is optional; called after each top-level path is
+    handled so the API can stream a percent-complete bar.
     """
     out: list[ParsedFile] = []
     skipped: list[dict] = []          # used when the caller supplies no sink
@@ -586,7 +590,8 @@ def parse_directory(root: str, include_pdf: bool = True,
     scratch = Path(tempfile.mkdtemp(prefix="erakshak-archives-"))
     try:
         _walk(Path(root), out, pdf_cap, include_pdf, archive_budget, scratch,
-              skipped if skipped_out is None else skipped_out)
+              skipped if skipped_out is None else skipped_out,
+              on_progress=on_progress)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return out
@@ -672,7 +677,8 @@ def _content_key(path: Path) -> str | None:
 
 
 def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
-          archive_budget: int, scratch: Path, skipped: list[dict]) -> None:
+          archive_budget: int, scratch: Path, skipped: list[dict],
+          on_progress=None) -> None:
     # Real case folders carry the same exhibit in several places — one portal export
     # appeared three times across `fir-0006-2025-u`, and its 830 rows were parsed three
     # times. Event-level dedup catches the resulting duplicates afterwards, so the output
@@ -680,28 +686,23 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
     # far worse than the evidence actually is. The copy is recorded rather than ignored:
     # which exhibits are duplicated is itself part of the chain of custody.
     seen: dict[str, str] = {}
+    paths = []
     for p in sorted(root.rglob("*")):
-        if p.name.startswith("~$"):        # Office lock/temp files
+        if p.name.startswith("~$"):
             continue
-        # macOS writes an AppleDouble sidecar ("._name") beside every file, and a
-        # __MACOSX/ mirror inside archives, when copying to a non-HFS volume. Evidence
-        # handed over on a Mac-formatted drive is full of them. They carry no data but
-        # share the real file's extension, so they were being parsed and counted as
-        # per-file parse failures — noise that hides genuine ingestion problems.
         if p.name.startswith("._") or "__MACOSX" in p.parts:
             continue
         if not p.is_file():
             continue
-
+        paths.append(p)
+    total = max(len(paths), 1)
+    for i, p in enumerate(paths):
         if p.suffix.lower() == ".zip":
             dest = scratch / f"{p.stem}-{abs(hash(str(p))) & 0xFFFFFF:06x}"
             for member in archive.extract_archive(
                 str(p), dest,
                 max_total_bytes=archive_budget,
                 max_depth=config.max_archive_depth(),
-                # Budget truncation, depth refusals, encrypted and unreadable members were
-                # log-only, so an archive that yielded less than it contained looked
-                # complete in the reject report.
                 skipped_out=skipped,
             ):
                 if member.suffix.lower() in detector.FORMAT_BY_EXT:
@@ -709,9 +710,7 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
                                skipped=skipped)
                 else:
                     _record_skip(skipped, member, container=p.name)
-            continue
-
-        if p.suffix.lower() in detector.FORMAT_BY_EXT:
+        elif p.suffix.lower() in detector.FORMAT_BY_EXT:
             key = _content_key(p)
             if key is not None and key in seen:
                 skipped.append({
@@ -719,9 +718,14 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
                     "reason": f"duplicate exhibit: byte-identical to {seen[key]}",
                     "rows": 0, "rejected": 0, "file_skipped": True, "duplicate_of": seen[key],
                 })
-                continue
-            if key is not None:
-                seen[key] = p.name
-            _parse_one(p, out, pdf_cap, include_pdf, skipped=skipped)
+            else:
+                if key is not None:
+                    seen[key] = p.name
+                _parse_one(p, out, pdf_cap, include_pdf, skipped=skipped)
         else:
             _record_skip(skipped, p)
+        if on_progress is not None:
+            try:
+                on_progress(i + 1, total, p.name)
+            except Exception:  # noqa: BLE001 — UI progress must never abort ingest
+                pass

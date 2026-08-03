@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .core import analyze_progress as progress
 from .core.logging_config import get_logger
 from .correlation import timeline_builder, window_correlator
 from .detection import service as detection
@@ -108,69 +109,65 @@ def run_base(input_dir: str, include_pdf: bool = True) -> Investigation:
     log.info("pipeline base: %s (pdf=%s)", input_dir, include_pdf)
     inv = Investigation(input_dir=input_dir)
 
-    # Files the walker never opened at all. Without this sink they vanished silently —
-    # 125 in one real case, 267 in the other. A row that fails to map is at least
-    # counted; a file that is never opened is unknowable from the output, which is the
-    # worse failure for a tool whose job is to say what the evidence contains.
     skipped: list[dict] = []
-    inv.parsed_files = ingestion.parse_directory(input_dir, include_pdf=include_pdf,
-                                                 skipped_out=skipped)
+    progress.report(stage="parse", message="Parsing evidence files…", done=0, total=0, fraction=0.0)
+
+    def _on_parse(done: int, total: int, name: str) -> None:
+        progress.report(
+            stage="parse",
+            message=f"Parsing {name}",
+            done=done,
+            total=total,
+        )
+
+    inv.parsed_files = ingestion.parse_directory(
+        input_dir, include_pdf=include_pdf, skipped_out=skipped, on_progress=_on_parse,
+    )
+    progress.report(stage="normalize", message="Normalising fields & timestamps…", fraction=0.0)
     inv.events, norm_rejects = normalization.normalize_parsed_files(inv.parsed_files)
-    # Parse-time rejects live on each ParsedFile and were being discarded here: the
-    # normalizer's return value replaced the list wholesale, so per-file read failures,
-    # over-cap PDFs and blank-row counts never reached the reject report. That is why
-    # the blank-row count read 0 — the entries were produced and then dropped.
     parse_rejects = [r for pf in inv.parsed_files for r in (pf.rejects or [])]
     inv.rejects = parse_rejects + skipped + norm_rejects
     log.info("ingested %d files -> %d events (%d reject entries)",
              len(inv.parsed_files), len(inv.events), len(inv.rejects))
 
-    # Merge analyst-supplied KYC/entity-map links (account<->phone/wallet) so cross-domain
-    # correlation can fire. LINK events only contribute merge edges — not timeline/detection.
+    progress.report(stage="resolve", message="Resolving entities…", fraction=0.0)
     link_events = er_mapping.load_link_events(input_dir)
-    # LEA Common-IMEI reports in the case folder are the same kind of bridge, auto-discovered.
     link_events += er_common_imei.load_common_imei_links(input_dir, inv.events)
-    # Bank replies to legal process, tabulated in Gujarati in the police paperwork: the account
-    # beside the mobile registered against it. Same class of bridge again, and the one FR-9 has
-    # been waiting on — `account+phone` was 3. Gated on ERAKSHAK_BANK_REPLY_LINKS so both arms
-    # of the window sweep run the SAME build, which is the only way a moved STRONG count is
-    # attributable to the links rather than to anything else that changed.
     if er_bank_reply.enabled():
+        progress.report(stage="resolve", message="Loading bank-reply account↔phone links…",
+                        fraction=0.4)
         link_events += er_bank_reply.load_bank_reply_links(input_dir)
     inv.entities, inv.node_to_entity = er.resolve(inv.events + link_events)
     er.assign_entities(inv.events, inv.node_to_entity, inv.entities)
 
-    # The investigation's own narrative — affidavits, charge sheets, panchnamas — indexed by the
-    # identifiers it names. 36 of these documents carry their evidence in prose only, so a table
-    # reader cannot see them at all; and none of it can be events, because an affidavit has no
-    # per-identifier timestamp. It answers "which documents mention this account", which is the
-    # question asked when a number surfaces and the narrative behind it is what's wanted.
+    progress.report(stage="documents", message="Indexing narrative documents…", fraction=0.0)
     mention_skips: list[dict] = []
     inv.document_mentions = doc_mentions.build(input_dir, skipped_out=mention_skips)
     inv.rejects += mention_skips
 
+    progress.report(stage="timeline", message="Building timeline & transfers…", fraction=0.0)
     inv.timeline = timeline_builder.build(inv.events)
+    progress.report(stage="timeline", message="Building money-flow transfers…", fraction=0.5)
     inv.transfers = money_flow.build_transfers(inv.events)
     inv.data_quality = validation.check_balances(inv.events)   # A5
+    progress.report(stage="timeline", message="Timeline ready", fraction=1.0)
     return inv
 
 
 def apply_analysis(inv: Investigation, window_minutes: int | None = None) -> Investigation:
     """Window-DEPENDENT stages: correlation, detection/risk, graph."""
+    progress.report(stage="correlate", message="Correlating call / IP / transfers…", fraction=0.0)
     all_hits = window_correlator.correlate(
         inv.timeline, inv.entities, inv.events, window_minutes)
     inv.correlation_hits, inv.correlation_hits_medium = window_correlator.split_by_tier(all_hits)
-    # Both tiers reach the detector now. `call_transfer_coincidence` is named for the pair,
-    # not the triple, and counting STRONG only left it with 7,358 eligible entities and 0
-    # fired on the real case. The flag detail states which tier produced the hit.
+    progress.report(stage="detect", message="Scoring risk & typologies…", fraction=0.0)
     inv.risk = detection.detect(inv.events, inv.transfers, inv.correlation_hits,
                                 inv.entities, inv.correlation_hits_medium)
-    # The audit trail behind the risk numbers. Without it "0 high-risk entities" is
-    # indistinguishable from "the detector never ran", which is the reading an investigator
-    # would take from a clean-looking report.
     inv.rule_eligibility = detection.eligibility(
         inv.events, inv.transfers, inv.correlation_hits, inv.correlation_hits_medium)
+    progress.report(stage="graph", message="Building investigation graph…", fraction=0.0)
     inv.graph = graph_service.build(inv.events, inv.entities, inv.risk)
+    progress.report(stage="graph", message="Graph ready", fraction=1.0)
     return inv
 
 

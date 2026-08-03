@@ -112,18 +112,22 @@ def _analyze_uncoordinated(ds: str, window: int):
     if not path.is_dir() or "/" in ds or ".." in ds:  # basic path-safety
         raise HTTPException(404, f"dataset '{ds}' not found")
 
+    from backend.app.core import analyze_progress as ap
     from backend.app.persistence import store
 
     # Prefer a durable snapshot so restarting uvicorn does not re-parse a FIR case.
     cached = store.load_analysis_snapshot(ds, window)
     if cached is not None:
+        ap.report(stage="persist", message="Loading saved analysis…", fraction=1.0)
         return cached
 
     inv = pipeline.run(str(path), window_minutes=window)
     try:
+        ap.report(stage="persist", message="Saving durable snapshot…", fraction=0.0)
         store.save_analysis_snapshot(
             inv, dataset=ds, window_minutes=window, file_counts=_file_counts(inv),
         )
+        ap.report(stage="persist", message="Snapshot saved", fraction=1.0)
     except Exception as e:  # durability must never fail the request
         log.warning("analysis snapshot save failed for %s w=%s: %s", ds, window, e)
     return inv
@@ -140,6 +144,8 @@ def _analyze(ds: str, window: int, *, force: bool = False):
     Durable snapshots survive process restart. force=True deletes the snapshot and
     recomputes. Concurrent callers share one lock so a real case is never run twice.
     """
+    from backend.app.core import analyze_progress as ap
+
     key = (ds, window)
     if force:
         from backend.app.persistence import store
@@ -152,9 +158,23 @@ def _analyze(ds: str, window: int, *, force: bool = False):
         log.info("analyze(%s, w=%s) already running — waiting for it instead of "
                  "starting a second run", ds, window)
         lock.acquire()
+    ap.start(ds, window, force=force)
+    tokens = ap.bind(ds, window)
     try:
-        return _analyze_uncoordinated(ds, window)
+        inv = _analyze_uncoordinated(ds, window)
+        job = ap.get(ds, window) or {}
+        # In-memory lru hit never enters the body, so progress stays at "Starting".
+        from_cache = (
+            float(job.get("percent") or 0) < 2.0
+            and job.get("stage") == "parse"
+        ) or "Loading saved" in str(job.get("message") or "")
+        ap.finish(ds, window, from_cache=from_cache)
+        return inv
+    except Exception as e:
+        ap.finish(ds, window, error=str(e))
+        raise
     finally:
+        ap.unbind(tokens)
         lock.release()
 
 
@@ -511,6 +531,16 @@ def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
         "correlation_hits_medium": inv.correlation_hits_medium[:100],
         "top_risk": [_enrich_risk(r, inv) for r in top],
     }
+
+
+@v1.get("/analyze/progress/{ds}")
+def analyze_progress(ds: str, window: int = 10, user=Depends(require_role("analyst"))):
+    """Live progress for an in-flight (or just-finished) analyze of `ds`."""
+    from backend.app.core import analyze_progress as ap
+    job = ap.get(ds, window)
+    if job is None:
+        return {"dataset": ds, "window_minutes": window, "status": "idle"}
+    return job
 
 
 @v1.get("/entities/{ds}")
