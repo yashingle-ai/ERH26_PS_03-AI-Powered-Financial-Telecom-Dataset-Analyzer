@@ -111,7 +111,22 @@ def _analyze_uncoordinated(ds: str, window: int):
     path = DATASETS / ds
     if not path.is_dir() or "/" in ds or ".." in ds:  # basic path-safety
         raise HTTPException(404, f"dataset '{ds}' not found")
-    return pipeline.run(str(path), window_minutes=window)
+
+    from backend.app.persistence import store
+
+    # Prefer a durable snapshot so restarting uvicorn does not re-parse a FIR case.
+    cached = store.load_analysis_snapshot(ds, window)
+    if cached is not None:
+        return cached
+
+    inv = pipeline.run(str(path), window_minutes=window)
+    try:
+        store.save_analysis_snapshot(
+            inv, dataset=ds, window_minutes=window, file_counts=_file_counts(inv),
+        )
+    except Exception as e:  # durability must never fail the request
+        log.warning("analysis snapshot save failed for %s w=%s: %s", ds, window, e)
+    return inv
 
 
 #: One lock per (dataset, window). See _analyze.
@@ -119,21 +134,18 @@ _analyze_locks: dict[tuple[str, int], threading.Lock] = {}
 _analyze_locks_guard = threading.Lock()
 
 
-def _analyze(ds: str, window: int):
-    """Run the pipeline for a dataset, at most once at a time per key.
+def _analyze(ds: str, window: int, *, force: bool = False):
+    """Run / load analysis for a dataset; at most one in-flight run per key.
 
-    lru_cache only memoises *completed* calls, so concurrent identical requests
-    each miss the cache and each run the whole pipeline. That is fine for the
-    synthetic fixtures and ruinous for a real case: six overlapping runs of a
-    676 MB dataset drove the container to 6.4 of 7.6 GiB and 104% CPU, and the
-    UI can easily produce them — several routes query analyze, and a retry or an
-    impatient second click adds more.
-
-    Serialising on the key means the first caller computes and the rest wait and
-    then hit the warm cache. Requests run on FastAPI's threadpool (these are
-    sync defs), so blocking here holds a worker but does not stall the loop.
+    Durable snapshots survive process restart. force=True deletes the snapshot and
+    recomputes. Concurrent callers share one lock so a real case is never run twice.
     """
     key = (ds, window)
+    if force:
+        from backend.app.persistence import store
+        store.delete_analysis_snapshots(ds, window_minutes=window)
+        _analyze_uncoordinated.cache_clear()
+
     with _analyze_locks_guard:
         lock = _analyze_locks.setdefault(key, threading.Lock())
     if not lock.acquire(blocking=False):
@@ -147,14 +159,25 @@ def _analyze(ds: str, window: int):
 
 
 # `_analyze.cache_clear` is called after an upload; keep that surface working now
-# that the memoised function is wrapped.
-_analyze.cache_clear = _analyze_uncoordinated.cache_clear
+# that the memoised function is wrapped. Also drop durable snapshots for the dataset
+# when callers pass a name (upload path).
+def _clear_analyze_caches(dataset: str | None = None) -> None:
+    _analyze_uncoordinated.cache_clear()
+    if dataset:
+        from backend.app.persistence import store
+        store.delete_analysis_snapshots(dataset)
+
+
+_analyze.cache_clear = _clear_analyze_caches
 
 
 class AnalyzeRequest(BaseModel):
     dataset: str
     window_minutes: int = 10
     persist: bool = False
+    #: When true, ignore any durable snapshot and re-run the full pipeline.
+    force: bool = False
+
 
 
 def _iso(value):
@@ -313,7 +336,12 @@ def refresh(user=Depends(get_current_user)):
 # ---- protected data endpoints ----
 @v1.get("/datasets")
 def datasets(user=Depends(require_role("analyst"))):
-    return {"datasets": [p.name for p in sorted(DATASETS.glob("*")) if p.is_dir()]}
+    from backend.app.persistence import store
+    return {
+        "datasets": [p.name for p in sorted(DATASETS.glob("*")) if p.is_dir()],
+        # Durable analyze results that survive an API restart (keyed by window).
+        "cached": store.list_analysis_snapshots(),
+    }
 
 
 # ---- upload ----
@@ -446,8 +474,9 @@ async def upload(ds: str,
 
     if accepted:
         # Results are memoised per (dataset, window); without this the next analyze
-        # would confidently return figures that predate the upload.
-        _analyze.cache_clear()
+        # would confidently return figures that predate the upload. Also drop the
+        # durable snapshot for this dataset so a restart cannot revive stale figures.
+        _analyze.cache_clear(ds)
 
     audit("upload", user=user["username"], dataset=ds, kind=kind,
           accepted=accepted, rejected=len(results) - accepted, bytes=total_bytes)
@@ -457,16 +486,24 @@ async def upload(ds: str,
 
 @v1.post("/analyze")
 def analyze(req: AnalyzeRequest, user=Depends(require_role("analyst"))):
-    inv = _analyze(req.dataset, req.window_minutes)
-    audit("analyze", user=user["username"], dataset=req.dataset, window=req.window_minutes)
+    from backend.app.persistence import store
+    from_cache = (
+        not req.force
+        and store.has_analysis_snapshot(req.dataset, req.window_minutes)
+    )
+    inv = _analyze(req.dataset, req.window_minutes, force=req.force)
+    # After a forced run the snapshot is fresh; after a cache hit it was already true.
+    from_cache = from_cache and not req.force
+    audit("analyze", user=user["username"], dataset=req.dataset,
+          window=req.window_minutes, force=req.force, from_cache=from_cache)
     if req.persist:
-        from backend.app.persistence import store
         store.persist_investigation(inv, dataset=req.dataset)
         audit("persist", user=user["username"], dataset=req.dataset)
     top = sorted(inv.risk.values(), key=_risk_rank)[:20]
     return {
         "dataset": req.dataset,
         "window_minutes": req.window_minutes,
+        "from_cache": from_cache,
         "summary": inv.summary(),
         "file_counts": _file_counts(inv),
         "money_flow_series": _money_flow_series(inv),

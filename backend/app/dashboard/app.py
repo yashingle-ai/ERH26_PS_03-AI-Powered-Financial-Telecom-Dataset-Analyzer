@@ -14,15 +14,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-import pandas as pd
-import streamlit as st
+from backend.app.core.env import load_env  # noqa: E402
 
-from backend.app import pipeline
-from backend.app.api.security import authenticate_user
-from backend.app.core import config
-from backend.app.core.logging_config import audit
-from backend.app.dashboard import viz
-from backend.app.reporting import service as reporting
+load_env()
+
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
+
+from backend.app import pipeline  # noqa: E402
+from backend.app.api.security import authenticate_user  # noqa: E402
+from backend.app.core import config  # noqa: E402
+from backend.app.core.logging_config import audit  # noqa: E402
+from backend.app.dashboard import viz  # noqa: E402
+from backend.app.reporting import service as reporting  # noqa: E402
 
 st.set_page_config(page_title="ERakshak — Fusion Analyzer", layout="wide", page_icon="🛡️")
 

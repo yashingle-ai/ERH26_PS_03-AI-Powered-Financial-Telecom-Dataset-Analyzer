@@ -8,7 +8,9 @@ chain-of-custody. Rows are scoped by `dataset`; persisting a dataset replaces it
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from sqlalchemy import create_engine, delete, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..core import config
 from ..core.logging_config import get_logger
 from ..models.canonical import (
+    AnalysisSnapshot,
     Base,
     CorrelationHitRow,
     Entity,
@@ -152,6 +155,181 @@ def load_summary(dataset: str, url: str | None = None) -> dict:
                 select(func.count()).select_from(model).where(model.dataset == dataset)
             ).scalar_one()
     return out
+
+
+# ---- durable Investigation snapshots (survive API restart) --------------------
+#
+# Relational `persist_investigation` stores a forensic subset (events/entities/risk)
+# but cannot rebuild the live Investigation the API serves (transfers, graph payload,
+# medium hits, rejects, parsed_files, …). Snapshots pickle the full object to disk and
+# keep a DB index row so `/v1/datasets` can show READY without re-running the pipeline.
+
+
+def _cache_dir() -> Path:
+    raw = os.getenv("ERAKSHAK_ANALYSIS_CACHE")
+    if raw:
+        d = Path(raw)
+    else:
+        # Prefer beside the SQLite file when using the default URL; else repo data/.
+        d = config.ROOT / "data" / "analysis_cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _blob_name(dataset: str, window_minutes: int) -> str:
+    # Dataset names are already constrained by the API to a safe charset.
+    return f"{dataset}__w{int(window_minutes)}.pkl"
+
+
+def has_analysis_snapshot(dataset: str, window_minutes: int, url: str | None = None) -> bool:
+    from sqlalchemy import select
+    url = url or config.database_url()
+    with get_session(url) as s:
+        row = s.execute(
+            select(AnalysisSnapshot).where(
+                AnalysisSnapshot.dataset == dataset,
+                AnalysisSnapshot.window_minutes == int(window_minutes),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        return Path(row.blob_path).is_file()
+
+
+def list_analysis_snapshots(url: str | None = None) -> list[dict]:
+    """Metadata for every durable snapshot (for the Investigations list)."""
+    from sqlalchemy import select
+    url = url or config.database_url()
+    out = []
+    with get_session(url) as s:
+        rows = s.execute(select(AnalysisSnapshot).order_by(AnalysisSnapshot.dataset)).scalars()
+        for row in rows:
+            if not Path(row.blob_path).is_file():
+                continue
+            out.append({
+                "dataset": row.dataset,
+                "window_minutes": row.window_minutes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "summary": row.summary or {},
+                "file_counts": row.file_counts or {},
+            })
+    return out
+
+
+def save_analysis_snapshot(inv, dataset: str, window_minutes: int,
+                           file_counts: dict | None = None,
+                           url: str | None = None) -> dict:
+    """Pickle `inv` to disk and upsert the DB index row. Returns snapshot metadata."""
+    import datetime as _dt
+    import pickle
+
+    from sqlalchemy import delete
+
+    url = url or config.database_url()
+    window_minutes = int(window_minutes)
+    cache = _cache_dir()
+    blob = cache / _blob_name(dataset, window_minutes)
+    # Write via temp + replace so a crash mid-write cannot leave a half pickle that
+    # later loads as a corrupt Investigation.
+    tmp = blob.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(inv, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(blob)
+
+    summary = inv.summary() if hasattr(inv, "summary") else {}
+    file_counts = file_counts or {}
+    created = _dt.datetime.now(tz=_dt.timezone.utc)
+
+    with get_session(url) as s:
+        s.execute(
+            delete(AnalysisSnapshot).where(
+                AnalysisSnapshot.dataset == dataset,
+                AnalysisSnapshot.window_minutes == window_minutes,
+            )
+        )
+        s.add(AnalysisSnapshot(
+            dataset=dataset,
+            window_minutes=window_minutes,
+            created_at=created,
+            summary=summary,
+            file_counts=file_counts,
+            blob_path=str(blob.resolve()),
+        ))
+        s.commit()
+
+    meta = {
+        "dataset": dataset,
+        "window_minutes": window_minutes,
+        "created_at": created.isoformat(),
+        "summary": summary,
+        "file_counts": file_counts,
+        "blob_path": str(blob),
+    }
+    log.info("saved analysis snapshot dataset=%s window=%s path=%s",
+             dataset, window_minutes, blob)
+    return meta
+
+
+def load_analysis_snapshot(dataset: str, window_minutes: int, url: str | None = None):
+    """Return the pickled Investigation, or None if missing/unreadable."""
+    import pickle
+
+    from sqlalchemy import select
+
+    url = url or config.database_url()
+    window_minutes = int(window_minutes)
+    with get_session(url) as s:
+        row = s.execute(
+            select(AnalysisSnapshot).where(
+                AnalysisSnapshot.dataset == dataset,
+                AnalysisSnapshot.window_minutes == window_minutes,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        path = Path(row.blob_path)
+    if not path.is_file():
+        log.warning("analysis snapshot row exists but blob missing: %s", path)
+        return None
+    try:
+        with open(path, "rb") as f:
+            inv = pickle.load(f)
+    except Exception as e:
+        log.warning("failed to load analysis snapshot %s: %s", path, e)
+        return None
+    log.info("loaded analysis snapshot dataset=%s window=%s", dataset, window_minutes)
+    return inv
+
+
+def delete_analysis_snapshots(dataset: str, window_minutes: int | None = None,
+                              url: str | None = None) -> int:
+    """Drop snapshot index rows (+ blob files). All windows if `window_minutes` is None."""
+    from sqlalchemy import delete, select
+
+    url = url or config.database_url()
+    removed = 0
+    with get_session(url) as s:
+        q = select(AnalysisSnapshot).where(AnalysisSnapshot.dataset == dataset)
+        if window_minutes is not None:
+            q = q.where(AnalysisSnapshot.window_minutes == int(window_minutes))
+        rows = list(s.execute(q).scalars())
+        for row in rows:
+            path = Path(row.blob_path)
+            path.unlink(missing_ok=True)
+            path.with_suffix(".pkl.tmp").unlink(missing_ok=True)
+            removed += 1
+        if window_minutes is None:
+            s.execute(delete(AnalysisSnapshot).where(AnalysisSnapshot.dataset == dataset))
+        else:
+            s.execute(delete(AnalysisSnapshot).where(
+                AnalysisSnapshot.dataset == dataset,
+                AnalysisSnapshot.window_minutes == int(window_minutes),
+            ))
+        s.commit()
+    if removed:
+        log.info("deleted %d analysis snapshot(s) for dataset=%s window=%s",
+                 removed, dataset, window_minutes)
+    return removed
 
 
 def _jsonable(obj):

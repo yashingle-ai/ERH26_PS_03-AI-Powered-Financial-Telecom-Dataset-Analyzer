@@ -12,6 +12,10 @@ from pathlib import Path
 
 import yaml
 
+from backend.app.core.env import load_env
+
+load_env()
+
 # Repo root = three levels up from this file (backend/app/core/config.py)
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG_DIR = ROOT / "config"

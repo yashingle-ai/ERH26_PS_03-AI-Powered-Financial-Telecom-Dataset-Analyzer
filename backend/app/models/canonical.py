@@ -193,3 +193,26 @@ class CorrelationHitRow(Base):
     window_minutes = Column(Integer, nullable=False)
     explanation = Column(String, nullable=True)
     evidence = Column(JSON, nullable=False, default=dict)
+
+
+class AnalysisSnapshot(Base):
+    """Index row for a durable full-Investigation snapshot (survives API restarts).
+
+    The Investigation object is too large for a practical SQLite BLOB on real FIR
+    cases, so the payload lives as a pickle under `data/analysis_cache/` and this
+    row is the lookup key + summary for the UI. Re-analyze deletes and replaces it.
+    """
+
+    __tablename__ = "analysis_snapshot"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset = Column(String, nullable=False, index=True)
+    window_minutes = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    summary = Column(JSON, nullable=False, default=dict)
+    file_counts = Column(JSON, nullable=False, default=dict)
+    blob_path = Column(String, nullable=False)
+
+    __table_args__ = (
+        Index("ix_analysis_snapshot_ds_window", "dataset", "window_minutes", unique=True),
+    )
