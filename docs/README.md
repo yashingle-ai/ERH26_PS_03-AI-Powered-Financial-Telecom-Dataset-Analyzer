@@ -34,7 +34,7 @@ Then, as needed:
 | [`RETROSPECTIVE_2026-07-30.md`](RETROSPECTIVE_2026-07-30.md) | Hypotheses **falsified** as well as confirmed. Worth reading once for the method |
 | [`architecture.md`](architecture.md) | Short module map. The contracts are in `handbook/ARCHITECTURE.md` |
 | [`WORK_PLAN_2026-08-05.md`](WORK_PLAN_2026-08-05.md) | The current work plan and its baseline measurements |
-| [`EVIDENCE_LEAK_2026-08-05.md`](EVIDENCE_LEAK_2026-08-05.md) | ⚠️ **Open rule-4 finding** — live case identifiers are tracked in git and on the public remote. Awaiting an owner decision |
+| [`EVIDENCE_LEAK_2026-08-05.md`](EVIDENCE_LEAK_2026-08-05.md) | ⚠️ **Open rule-4 finding** — live case identifiers are tracked in git. Private repo, so not a public disclosure; still a breach. Awaiting an owner decision |
 | [`decisions/`](decisions/) | ADRs |
 
 `../artifacts/` holds the frontend design package — backend understanding, technical

@@ -1,8 +1,12 @@
-# Rule-4 finding — live case identifiers are in git, and on the public remote
+# Rule-4 finding — live case identifiers are committed to git
 
 **Found:** 5 Aug 2026, incidentally, while running the rule-4 grep before a documentation commit.
-**Status:** **open — needs a decision from the repository owner.** Nothing has been rewritten.
-**Severity:** high. This is the rule `CLAUDE.md` calls out as worse than shipping nothing.
+**Status:** **open — needs a decision from the repository owner.** Nothing has been redacted or
+rewritten.
+**Severity:** **moderate.** The repository is private (§3), so this is not a public disclosure —
+but it is still a breach of the rule `CLAUDE.md` calls out as worse than shipping nothing, and the
+identifiers travel with any future fork, transfer or visibility change. An earlier revision of this
+file rated it *high* on an unverified assumption that the repo was public; see the correction in §3.
 
 **No identifiers are reproduced in this file.** It names files and counts only. Use the grep in
 §4 to see the values.
@@ -49,9 +53,28 @@ purpose.
 `git log` puts the template in the repository since **25 Jul** (`a3f1351`), amended **30 Jul**
 (`a7709fe`). Both commits are contained in `origin/main`.
 
-The remote is a **public GitHub repository**. The identifiers have therefore been publicly
-available for roughly eleven days and must be assumed cloned, cached and indexed. Deleting them
-now removes them from the working tree, not from anyone's copy.
+**The repository is private** — confirmed by the owner on 5 Aug.
+
+> **Correction, same day.** The first revision of this file stated the remote was a *public*
+> GitHub repository and assessed the identifiers as publicly disclosed for eleven days. **That was
+> inferred, never verified, and it was wrong.** It is recorded rather than quietly edited out,
+> because overstating a finding costs credibility on the next one — the same reason
+> `handbook/MEASUREMENT.md` keeps its withdrawn figures.
+
+What this changes, and what it does not:
+
+- **Exposure is bounded by repository access**, not by the internet. Whoever can read the repo can
+  read the identifiers: the three collaborators, plus anyone the repo or an organisation grants
+  access to, plus any clone already taken.
+- **It is still a rule-4 breach.** The rule is "real evidence never reaches git", not "never
+  reaches a public git". `datasets/` is deny-by-default in `.gitignore` *and* `.dockerignore`
+  precisely so that access control is never the only thing standing between case material and
+  disclosure.
+- **A private repo can become public**, by a settings change, a transfer, or a fork into an
+  account with different defaults. The identifiers would go with it, including through history.
+- **Remediation is now cheaper and more likely to work.** A history rewrite on a private repo with
+  three known collaborators can genuinely remove the values, because every clone is accountable.
+  That was not true under the public assumption.
 
 ## 4. Why the existing safety check missed it
 
@@ -85,17 +108,23 @@ published history on a repository other people have cloned.
 
 | | Action | Effect | Cost |
 |---|---|---|---|
-| **A** | Redact the working tree only — replace real numbers with generated placeholders in tests, source, config and docs; blank the template's example block | Stops *further* publication; history unchanged | Low. Tests referencing the values need updating together, so the suite stays green |
-| **B** | A, plus make the repository private | Removes the public exposure going forward | Low, if no public visibility is required |
-| **C** | A + B, plus rewrite history (`git filter-repo`) and force-push | Removes the values from the repository's own history | High — invalidates every existing clone, and the two collaborators must re-clone. Forks, caches and GitHub's own archived views may retain them regardless |
+| **A** | Redact the working tree only — replace real numbers with generated placeholders in tests, source, config and docs; blank the template's example block | Stops the values spreading further; history unchanged | Low. Tests referencing the values must be updated in the same change so the suite stays green |
+| **B** | A, plus rewrite history (`git filter-repo`) and force-push | Removes the values from the repository entirely, including history | Moderate — invalidates every existing clone; all three collaborators must re-clone or reset |
+| **C** | Leave it, and keep the repository private | No work | The breach persists and travels with any future fork, transfer or visibility change |
 
-**Realistic assessment:** option C does not undo publication. Anything public for eleven days
-should be treated as disclosed. Its value is stopping the repository from continuing to serve the
-data, not restoring confidentiality.
+**Realistic assessment, revised now the repo is known to be private.** Option B is worth doing and
+is likely to actually succeed: with a private repo and three known collaborators, there is no
+population of anonymous clones to worry about, so removing the values from history removes them in
+practice rather than symbolically. Do **A** regardless — it is cheap, it is the part that stops the
+values being copied into the next test fixture, and it is a prerequisite for B.
 
-**Worth raising with whoever owns the case material**, independently of what is done to the
-repository. These are subjects of an active FIR, and the question of whether their identifiers were
-disclosed is not an engineering question.
+The ordering that matters: **A first**, then B once the working tree is clean, so the rewrite has a
+correct end state to land on.
+
+**Still worth a word with whoever owns the case material**, independently of what is done to the
+repository — though the private-repo finding makes this far less urgent than the first revision of
+this file implied. These are subjects of an active FIR; who has had read access to the repository
+since 25 Jul is the question, and it is not an engineering one.
 
 ## 6. What was done on 5 Aug
 
