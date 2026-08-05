@@ -10,7 +10,8 @@ import {
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useInvestigation } from "@/lib/investigation-context";
-import { api, type UploadFileResult, type UploadKind } from "@/lib/api";
+import { api, type AnalyzeStage, type UploadFileResult, type UploadKind } from "@/lib/api";
+import { useAnalyzeProgress, formatDuration } from "@/hooks/use-analyze-progress";
 import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/upload")({
@@ -18,10 +19,30 @@ export const Route = createFileRoute("/_app/upload")({
   component: UploadPage,
 });
 
-const stages = [
-  "Ingest", "Normalize", "Resolve entities", "Timeline", "Correlate",
-  "Money-flow", "Detect", "Graph", "Report",
+/**
+ * Shown only until the first progress poll returns; after that the server's own
+ * stage list is authoritative (`analyze_progress.STAGES`).
+ *
+ * These are deliberately the *server's* nine stages, not the nine this page used
+ * to invent. The old list ("Ingest", "Money-flow", "Report") described a pipeline
+ * that does not exist in that order, and nothing tied the two lists together.
+ */
+const FALLBACK_STAGES: AnalyzeStage[] = [
+  { id: "parse", label: "Parsing evidence files", weight: 55 },
+  { id: "normalize", label: "Normalising fields & timestamps", weight: 8 },
+  { id: "resolve", label: "Resolving entities", weight: 7 },
+  { id: "documents", label: "Indexing narrative documents", weight: 5 },
+  { id: "timeline", label: "Building timeline & transfers", weight: 5 },
+  { id: "correlate", label: "Correlating call / IP / transfers", weight: 8 },
+  { id: "detect", label: "Scoring risk & typologies", weight: 7 },
+  { id: "graph", label: "Building investigation graph", weight: 4 },
+  { id: "persist", label: "Saving durable snapshot", weight: 1 },
 ];
+
+/** Two or three words for the stepper chip; the full label goes in `title`. */
+function shortLabel(label: string): string {
+  return label.split(/\s+/).slice(0, 2).join(" ");
+}
 
 /** Mirrors UPLOAD_EXTENSIONS on the API. Kept in step so the picker does not
  *  offer a type the server will reject. */
@@ -57,8 +78,10 @@ function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState<UploadFileResult[] | null>(null);
   const [running, setRunning] = useState(false);
-  const [stage, setStage] = useState(0);
   const [summary, setSummary] = useState<string | null>(null);
+  /** The dataset an analyze is running against — also the progress poll key. */
+  const [runningDs, setRunningDs] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
   const { dataset, setDataset, windowMinutes } = useInvestigation();
   // Do NOT prefill with a sample dataset. Prefilling the active dataset means a
   // drag-and-upload without editing the name writes a real case into `demo` or
@@ -129,13 +152,13 @@ function UploadPage() {
       return;
     }
     setRunning(true);
-    setStage(1);
+    setRunningDs(ds);
+    setFinished(false);
     setSummary(null);
     toast.message(`Running pipeline on ${ds}…`);
-    const tick = window.setInterval(() => setStage((s) => (s < 8 ? s + 1 : s)), 400);
     try {
       const result = await api.analyze(ds, windowMinutes);
-      setStage(9);
+      setFinished(true);
       setSummary(
         `${result.summary.events} events · ${result.summary.entities} entities · ${result.summary.correlation_hits} hits`,
       );
@@ -143,12 +166,25 @@ function UploadPage() {
       toast.success("Pipeline complete", { description: `Dataset ${ds}` });
     } catch (e) {
       toast.error((e as Error).message || "Pipeline failed");
-      setStage(0);
     } finally {
-      window.clearInterval(tick);   // in finally: a thrown analyze used to leak this
+      // `running` gates the progress poll, so it must clear on the error path too
+      // — the previous fake ticker leaked for exactly this reason before it was
+      // moved into a `finally`.
       setRunning(false);
     }
   }, [target, dataset, windowMinutes, qc]);
+
+  // Poll only while a run is in flight. Nothing is requested when idle.
+  const progress = useAnalyzeProgress(runningDs, windowMinutes, running);
+
+  const stageList = progress?.stages?.length ? progress.stages : FALLBACK_STAGES;
+  const stageIndex = progress?.stage_index ?? -1;
+  // Before the first poll lands there is no server percent yet; showing 0 while
+  // "Running…" is honest, and beats inventing motion.
+  const percent = finished ? 100 : (progress?.percent ?? 0);
+  const eta = formatDuration(progress?.eta_seconds);
+  const elapsed = formatDuration(progress?.elapsed_seconds);
+  const fromCache = progress?.from_cache === true;
 
   const isFixtureTarget = FIXTURE_DATASETS.has(target.trim().toLowerCase());
   const queuedBytes = queued.reduce((a, f) => a + f.size, 0);
@@ -292,20 +328,52 @@ function UploadPage() {
       )}
 
       <div className="mb-6 rounded-lg border border-border bg-surface/60 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">Pipeline</div>
-          <div className="text-mono text-[11px] text-muted-foreground">
-            {running ? `Stage ${stage}/9` : stage === 9 ? "Complete" : "Idle"}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Pipeline
+          </div>
+          <div className="text-mono flex items-center gap-3 text-[11px] text-muted-foreground">
+            {running && stageIndex >= 0 && (
+              <span>Stage {stageIndex + 1}/{stageList.length}</span>
+            )}
+            {running && <span className="text-foreground">{percent.toFixed(1)}%</span>}
+            {elapsed && <span title="Elapsed">{elapsed} elapsed</span>}
+            {/* An ETA is only shown while running: after completion it is 0 and
+                reads as though something is still pending. */}
+            {running && eta && <span title="Estimated time remaining">~{eta} left</span>}
+            {!running && (finished ? "Complete" : "Idle")}
           </div>
         </div>
-        <Progress value={(stage / 9) * 100} className="mb-4 h-1.5" />
+
+        <Progress value={percent} className="mb-2 h-1.5" />
+
+        {/* The server's own message — "Parsing evidence files 812/986" — is the
+            only thing that distinguishes a working long run from a hung one. */}
+        <div className="text-mono mb-4 flex min-h-[16px] items-center gap-2 text-[11px]">
+          {running && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[color:var(--risk-med)]" />}
+          <span className="truncate text-muted-foreground">
+            {progress?.message || (running ? "Starting pipeline…" : "")}
+          </span>
+          {progress?.total ? (
+            <span className="shrink-0 text-muted-foreground/70">
+              {progress.done ?? 0}/{progress.total}
+            </span>
+          ) : null}
+          {fromCache && (
+            <span className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-primary">
+              cached
+            </span>
+          )}
+        </div>
+
         <div className="grid grid-cols-3 gap-2 md:grid-cols-9">
-          {stages.map((s, i) => {
-            const done = i < stage;
-            const active = i + 1 === stage && running;
+          {stageList.map((s, i) => {
+            const done = finished || (stageIndex >= 0 && i < stageIndex);
+            const active = running && i === stageIndex;
             return (
               <div
-                key={s}
+                key={s.id}
+                title={s.label}
                 className={`rounded border px-2 py-2 text-center ${
                   done ? "border-primary/40 bg-primary/10 text-primary" :
                   active ? "border-[color:var(--risk-med)]/40 bg-[color:var(--risk-med)]/10 text-[color:var(--risk-med)]" :
@@ -317,7 +385,9 @@ function UploadPage() {
                    active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> :
                    <AlertTriangle className="h-3.5 w-3.5 opacity-30" />}
                 </div>
-                <div className="text-mono text-[9px] uppercase tracking-widest">{s}</div>
+                <div className="text-mono text-[9px] uppercase tracking-widest">
+                  {shortLabel(s.label)}
+                </div>
               </div>
             );
           })}

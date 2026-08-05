@@ -4,13 +4,17 @@ Forensic data-fusion tool for problem statement **ERH26_PS_03**: ingest bank sta
 IPDR from a real FIR case folder, resolve one entity/timeline model, surface cross-domain
 coincidences. Two Claude sessions built it over several days on **real police evidence**.
 
-Read this file first. Then `docs/yash development/GAPS.md` before choosing work, and
-`docs/yash development/DECISIONS.md` before changing anything that looks wrong — several
+Read this file first. Then `docs/handbook/GAPS.md` before choosing work, and
+`docs/handbook/DECISIONS.md` before changing anything that looks wrong — several
 decisions look like bugs until you know what was measured.
 
-**Current state, verified 31 Jul:** 425 tests pass, ruff clean, `tsc` clean, `vite build` succeeds.
-Pipeline runs end to end on `demo` and both real cases. 15 API endpoints, 18/18 checks.
-Scorecard: 12 green · 6 amber · 1 red.
+**Current state, verified 5 Aug:** 429 tests pass, ruff clean, `tsc` clean. (31 Jul: 425 tests,
+`vite build` succeeds, pipeline runs end to end on `demo` and both real cases, 18/18 API checks.)
+**17** API endpoints. Scorecard: 12 green · 6 amber · 1 red.
+
+**Read `docs/README.md` for what to read** — 13 stale documents were moved to `docs/archive/`
+on 5 Aug, including two superseded gap registers. `docs/yash development/` is now
+`docs/handbook/`. Current work: `docs/WORK_PLAN_2026-08-05.md`.
 
 ---
 
@@ -31,13 +35,23 @@ means. `has_admin_role_columns()` is the guard; `bank_reply_links.py` is the wor
 
 **4 — Real evidence never reaches git.** `datasets/` is deny-by-default in `.gitignore` *and*
 `.dockerignore`. This applies to docs written *about* the evidence too —
-`docs/yash development/DECISIONS.md` was committed with live MSISDNs and IMEIs in it. Before committing anything under `docs/`:
+`docs/handbook/DECISIONS.md` was committed with live MSISDNs and IMEIs in it. Before committing anything under `docs/`:
 
 ```bash
 # [0-9] not \d — grep's \d is Unicode-aware too, so it flags the illustrative
 # Gujarati-digit example in these very docs. Same trap as the bug in §6.
-grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" docs/**/*.md CLAUDE.md
+#
+# Use `git grep`, NOT `docs/**/*.md`. Without `shopt -s globstar`, bash expands
+# `docs/**/*.md` exactly like `docs/*/*.md` — it matches docs/handbook/*.md and
+# skips docs/*.md entirely. That is not hypothetical: it is why DECISIONS.md was
+# caught and untracked in `abf14dd` while COMPONENT_STATUS.md and
+# PS_COMPLIANCE_AND_FIX_PLAN.md kept live case MSISDNs through the same sweep.
+git grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" -- '*.md' '*.py' '*.yaml' '*.csv'
 ```
+
+Scan **every tracked text file, not only `docs/`**. Case identifiers have reached
+`backend/tests/`, `config/profiles/`, `backend/app/` and `datasets/entity_map.template.csv`
+as well — see `docs/EVIDENCE_LEAK_2026-08-05.md`.
 
 **5 — Never redefine a headline metric. Add a field beside it.** `rejected_rows`,
 `rows_in_unrecognised_tables` and `correlation_hits` keep their original meanings so every figure
@@ -78,9 +92,12 @@ records and the integration accepted it because the output was merely non-empty.
 ## 3. Commands
 
 ```bash
-# tests + lint  (the shipped .venv is POSIX-layout and unusable on Windows)
-PYTHONPATH=. python -m pytest backend/tests -p no:warnings --tb=short
-PYTHONPATH=. python -m ruff check backend/ scripts/
+# tests + lint  — call the venv interpreter EXPLICITLY.
+# Bare `python` is the system 3.13 here; it has no pdfplumber and fails collection on
+# 16 files, which reads as a broken checkout and is not one. (The old warning that this
+# .venv is POSIX-layout no longer holds — it was recreated on Windows and has Scripts/.)
+PYTHONPATH=. ./.venv/Scripts/python.exe -m pytest backend/tests -p no:warnings --tb=short
+PYTHONPATH=. ./.venv/Scripts/python.exe -m ruff check backend/ scripts/
 
 # frontend — use the local binaries; `npx tsc` may fetch an unrelated package
 cd frontend && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build
@@ -115,7 +132,7 @@ that exhausted memory and killed a run with `MemoryError` in an unrelated functi
 
 ## 5. Already built. Do not rebuild.
 
-`docs/yash development/GAPS.md` sent someone to build item 3.1 after it existed — check the 🟢
+`docs/handbook/GAPS.md` sent someone to build item 3.1 after it existed — check the 🟢
 markers there first.
 
 - **Counterparty-side detection features** (`6f7751f`) — entities seen only as somebody else's
@@ -128,6 +145,9 @@ markers there first.
 - **Indic numerals + the amount bug** (`fa368cd`) — see §6.
 - **Document mention index** (`48efb0e`) — `GET /v1/document-mentions/{ds}`.
 - **Unrecognised-table reasons** (`c99e1e1`) — FR-4's residue split by cause.
+- **Durable analysis snapshots + live progress** (`401ac0d`, `fb0b016`, 3 Aug) — results survive a
+  restart; `POST /v1/analyze` takes `force` and returns `from_cache`;
+  `GET /v1/analyze/progress/{ds}` reports stage/percent/ETA. `docs/handbook/GAPS.md` §8.
 
 ## 6. Traps. Each invites a specific wrong action.
 
@@ -155,6 +175,13 @@ against its ASCII twin, across three merge keys, with no reject entry. Use `core
 while the commas did not. A ₹75-lakh transfer recorded as 75 paise, silently. Not
 Gujarati-specific. Loud failures are not the dangerous ones.
 
+**A durable snapshot outlives your code change.** Since 3 Aug a finished analysis is pickled to
+`data/analysis_cache/<ds>__w<N>.pkl` and reloaded on restart. So after editing a profile, a
+threshold or any pipeline stage, the API keeps serving the **pre-change** figures — and restarting
+it does not help, which is exactly the move you will try. Worse for the A/B protocol in §2: a flag
+flip does not invalidate a snapshot, so both arms return the same pickle and you measure a
+difference of zero and believe it. Pass `force: true`, or clear `data/analysis_cache/`.
+
 **Editing a frontend file can flip it CRLF** and produce ~490 phantom prettier errors. Check
 `git diff --stat` for a whole-file rewrite.
 
@@ -171,11 +198,11 @@ junction and deletes the real directory.
 4. If a claim moved a number, say which change moved it. If it moved nothing, **say that** — three
    claims here were withdrawn for being unattributable or overstated, and that is the norm.
 5. Reject entries for any new skip path (rule 2).
-6. Update `docs/yash development/GAPS.md` — mark 🟢 what you finished, so the next agent does not
+6. Update `docs/handbook/GAPS.md` — mark 🟢 what you finished, so the next agent does not
    rebuild it.
 
-Full package in `docs/yash development/`: `ARCHITECTURE.md` (stage contracts), `DATA_MODEL.md`
-(**read before writing code**), `RUNBOOK.md` (commands + failure modes), `API.md` (15 endpoints),
+Full package in `docs/handbook/`: `ARCHITECTURE.md` (stage contracts), `DATA_MODEL.md`
+(**read before writing code**), `RUNBOOK.md` (commands + failure modes), `API.md` (17 endpoints),
 `MEASUREMENT.md` (the A/B protocol and what was withdrawn), `TESTING.md`, `GAPS.md`, `DECISIONS.md`.
 
 Deeper reading: `docs/COMPONENT_STATUS.md` (component detail),

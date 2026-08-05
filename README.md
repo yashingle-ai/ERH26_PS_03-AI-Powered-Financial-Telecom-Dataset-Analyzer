@@ -12,15 +12,22 @@ suspicious money-flow / communication patterns, and produces investigation-ready
 
 ## Status
 
-Build strategy: **core-first, incremental with review gates, Streamlit-first UI** (later React+D3).
-Current increment: **Phase 0 — foundations + synthetic data generator**. See
-[`docs/progress.md`](docs/progress.md).
+All phases built and running end to end on **two real FIR case folders**. As of 5 Aug 2026:
+**429 tests pass**, ruff clean, `tsc` clean; 17 API endpoints; **12 of 19 problem-statement
+requirements green, 6 amber, 1 red**. The red is FR-9 (temporal coincidence) and it is blocked on
+missing IPDR evidence, not on code.
+
+**→ [`docs/README.md`](docs/README.md) — start here.** It is the index: what to read, in what
+order, and which documents are archived and must not be used as status.
 
 ## Known gaps
 
-**→ [docs/GAP_ANALYSIS_REAL_DATA.md](docs/GAP_ANALYSIS_REAL_DATA.md)** — every open gap in
-one table, measured against the real case data, with what it would take to close each.
-Start there before picking up work. (The older `docs/gap_analysis.md` is superseded.)
+**→ [`docs/handbook/GAPS.md`](docs/handbook/GAPS.md)** — every open gap, ranked and sized, with
+🟢 markers on what is already finished. Check those markers before starting anything; an earlier
+revision of that file sent someone to build a feature that already existed.
+
+Two older gap registers (`gap_analysis.md`, `GAP_ANALYSIS_REAL_DATA.md`) are in
+[`docs/archive/`](docs/archive/) and are **not** status.
 
 ## Running it
 

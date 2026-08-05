@@ -191,9 +191,45 @@ export type CorrelationHitDto = {
   explanation?: string;
 };
 
+/** One pipeline stage as the server defines it. Weights sum to ~100. */
+export type AnalyzeStage = { id: string; label: string; weight: number };
+
+/**
+ * Live progress for an in-flight analyze — `GET /v1/analyze/progress/{ds}`.
+ *
+ * Polled by a *second* request while the analyze request is still open: the
+ * pipeline is synchronous and a real FIR case takes 11–49 minutes, so the call
+ * itself carries no intermediate signal.
+ *
+ * `stages` is the server's own stage list. Render it rather than a local copy —
+ * the page used to hardcode nine labels that did not match the server's, and
+ * nothing tied the two lists together.
+ */
+export type AnalyzeProgress = {
+  dataset: string;
+  window_minutes: number;
+  status: "idle" | "running" | "done" | "error";
+  stage?: string;
+  stage_label?: string;
+  stage_index?: number;
+  stage_count?: number;
+  message?: string;
+  percent?: number;
+  done?: number;
+  total?: number;
+  elapsed_seconds?: number;
+  /** null until at least 1% is complete — before that the estimate is noise. */
+  eta_seconds?: number | null;
+  error?: string | null;
+  from_cache?: boolean;
+  stages?: AnalyzeStage[];
+};
+
 export type AnalyzeResponse = {
   dataset: string;
   window_minutes: number;
+  /** True when served from a durable snapshot instead of a fresh pipeline run. */
+  from_cache?: boolean;
   summary: AnalyzeSummary;
   file_counts: { bank: number; cdr: number; ipdr: number; other: number };
   money_flow_series: { t: string; inflow: number; outflow: number }[];
@@ -419,6 +455,20 @@ export const api = {
         persist,
       }),
     });
+  },
+
+  /**
+   * Progress of an in-flight analyze. Cheap — a locked dict read on the server.
+   *
+   * Do not raise `minTokenSeconds` here: this is polled repeatedly and a long
+   * minimum would trigger a token refresh on every poll. The analyze call it
+   * accompanies already holds a token good for 20 minutes.
+   */
+  analyzeProgress(dataset: string, window = 10) {
+    const q = new URLSearchParams({ window: String(window) });
+    return request<AnalyzeProgress>(
+      `/v1/analyze/progress/${encodeURIComponent(dataset)}?${q}`,
+    );
   },
 
   entities(dataset: string, window = 10, limit = 200, offset = 0) {

@@ -558,7 +558,7 @@ Measured on that case, so you can tell a working run from a broken one:
 | Transactions / calls | 1,800 / 203,046 |
 | Entities | 4,144 |
 | Rejected rows | 174,062 across 892 entries — surfaced in **Data Quality**, not hidden |
-| **Correlation hits** | **0** — expected. See [G5](docs/GAP_ANALYSIS_REAL_DATA.md): no entity carries both an account and a phone, so there is nothing to correlate across. Not a bug in the correlator |
+| **Correlation hits** | **0** — expected, but *not* for the reason this table used to give. "No entity carries both an account and a phone" was true in July and was fixed on 31 Jul (`account+phone` 2 → 30) — and STRONG stayed 0. The leg that never lands is the **IP session**: 4,133 against 203,050 calls, covering 19 phones of 4,026. See [`docs/handbook/GAPS.md`](docs/handbook/GAPS.md) §1. Not a bug in the correlator |
 
 ---
 

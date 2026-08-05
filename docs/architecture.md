@@ -3,7 +3,7 @@
 Implements `research/07_architecture_planning.md`. Modular monolith (Python) + Streamlit UI.
 
 > This is the module map. For each stage's **contract** — what it guarantees, the cross-stage
-> invariants, and why each parsing fallback exists — see `yash development/ARCHITECTURE.md`.
+> invariants, and why each parsing fallback exists — see `handbook/ARCHITECTURE.md`.
 
 ## Pipeline stages (backend/app/)
 
@@ -27,7 +27,7 @@ ingestion → normalization → entity_resolution → correlation → graph(mone
 | `pipeline.py` | Orchestrator: runs all stages → `Investigation` | |
 
 ## Data model
-See `docs/canonical_schema.md`. Entity ← EntityIdentifier; Event(TRANSACTION/CALL/IP_SESSION) with
+See `docs/archive/canonical_schema.md`. Entity ← EntityIdentifier; Event(TRANSACTION/CALL/IP_SESSION) with
 provenance; EntityLink for graph edges.
 
 ## Fusion bridge

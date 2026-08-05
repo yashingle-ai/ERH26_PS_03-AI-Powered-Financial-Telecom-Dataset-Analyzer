@@ -6,6 +6,13 @@ It exists because two Claude sessions built this over several days and most of w
 matters is *why* things are the way they are, which no amount of reading the code
 recovers.
 
+> Written by Yash Ingle, 25 Jul – 1 Aug 2026. The folder was called `docs/yash development/`
+> until 5 Aug and was renamed to `docs/handbook/` because the space in the path breaks shell
+> globs. Content unchanged; later additions are dated where they appear.
+>
+> **Newer than this file:** durable snapshots and live analyze progress landed 3 Aug —
+> `GAPS.md` §8, `../COMPONENT_STATUS.md` §14. Current work: `../WORK_PLAN_2026-08-05.md`.
+
 Everything here was measured on real case data. Where a number is unknown or a claim was
 withdrawn, that is stated rather than smoothed over.
 
@@ -27,7 +34,7 @@ Then, in this folder, as you need them:
 | **`ARCHITECTURE.md`** | before changing any stage — each stage's contract and why each fallback exists |
 | **`DATA_MODEL.md`** | **before writing any code.** Exact Event / Entity / transfer / risk / reject shapes, dumped from a live run. Which identifiers are merge keys and which must never be |
 | **`RUNBOOK.md`** | every command, real timings, and the failure modes seen on this machine with their fixes |
-| **`API.md`** | all 15 endpoints verified, plus the four paths you will try that do not exist |
+| **`API.md`** | all 17 endpoints verified, plus the four paths you will try that do not exist |
 | **`MEASUREMENT.md`** | the A/B protocol, every current figure with its provenance, and **the figures that were withdrawn** |
 | **`TESTING.md`** | conventions, the synthetic-fixture rule, and why the refusal tests matter more than the happy path |
 
@@ -38,10 +45,11 @@ Then, in this folder, as you need them:
 | 6 | `../RETROSPECTIVE_2026-07-30.md` | hypotheses confirmed *and falsified*. Read §7 before your first investigation |
 | 7 | `../PARSER_COVERAGE.md` | what each reader opens and what it refuses |
 | 8 | `../../research/01_problem_statement_analysis.md` | the original problem statement |
-| 9 | `../../COORDINATION.md` | only if a second agent is working the repo at the same time |
+| 9 | `../archive/COORDINATION.md` | only if a second agent is working the repo at the same time |
 
-`docs/gap_analysis.md` is **superseded and stale**. `docs/GAP_ANALYSIS_REAL_DATA.md`
-replaced it. Do not trust the old one as status.
+**Both older gap registers are now in `../archive/`** — `gap_analysis.md` and its replacement
+`GAP_ANALYSIS_REAL_DATA.md`. Neither is status. `GAPS.md` beside this file is the live one;
+`../archive/README.md` explains what each ancestor claimed and why it is wrong now.
 
 ---
 
@@ -95,8 +103,22 @@ cd frontend && npx tsc --noEmit && npm run build && npx vitest run
 docker build -t erakshak:ci .
 ```
 
-Run the backend gates **inside the image** — that is the CI environment, and the shipped
-`.venv` is POSIX-layout and unusable on Windows.
+Run the backend gates **inside the image** — that is the CI environment.
+
+> **Correction, 5 Aug.** This file previously said the shipped `.venv` was "POSIX-layout and
+> unusable on Windows". That was true of the original checkout and is not true now:
+> `.venv/pyvenv.cfg` records that it was recreated on this machine with `python -m venv`, it
+> has `Scripts/` rather than `bin/`, and it holds every dependency. **429 tests pass through
+> it.** The distinction still matters — a venv hardcodes absolute paths at creation and
+> cannot be copied between operating systems — but on Windows the working invocation is:
+>
+> ```bash
+> PYTHONPATH=. ./.venv/Scripts/python.exe -m pytest backend/tests -p no:warnings -q
+> PYTHONPATH=. ./.venv/Scripts/python.exe -m ruff check backend/ scripts/
+> ```
+>
+> Plain `python -m pytest` picks up the *system* interpreter, which lacks `pdfplumber` and
+> fails collection on 16 files. That looks exactly like a broken checkout and is not one.
 
 ---
 
@@ -206,8 +228,10 @@ bridge was built and measured, and STRONG stayed 0. The missing leg is the **IP 
 - The pipeline is CPU-bound Python holding the GIL, so the API is **unresponsive** for the
   duration. Not a hang.
 - Results are memoised per `(dataset, window)` behind a per-key lock, so concurrent
-  identical requests share one run. Warm response ~130 ms. The cache is **in-process** —
-  `docker compose restart api` clears it.
+  identical requests share one run. Warm response ~130 ms. ~~The cache is **in-process** —
+  `docker compose restart api` clears it.~~ **No longer true since 3 Aug:** results are also
+  written to a durable snapshot under `data/analysis_cache/`, so a restart *reloads* rather
+  than clears. Use `force: true` on `/v1/analyze`, or delete that directory.
 
 ---
 
@@ -222,6 +246,11 @@ ERAKSHAK_STRUCTURE_RECOVERY=0  # disable broken-geometry table recovery
 
 This is not a convenience. Attributing a 30,976-event change from run timestamps alone
 proved impossible, and two sessions nearly took credit for each other's work as a result.
+
+> **Added 5 Aug — this now has a trap in it.** A flag flip does **not** invalidate a durable
+> snapshot. Run arm A, set `ERAKSHAK_VALUE_TYPING=0`, run arm B, and you will be handed arm
+> A's pickle and measure no difference. **Force both arms**, or clear
+> `data/analysis_cache/` between them. See `../COMPONENT_STATUS.md` §14.2.
 
 ---
 
@@ -246,10 +275,10 @@ Checked end to end rather than asserted:
 
 | layer | result |
 |---|---|
-| tests | **425 passing**, ruff clean |
-| frontend | `tsc` clean, `vite build` succeeds |
+| tests | **425 passing**, ruff clean · *re-run 5 Aug: **429 passing**, ruff clean* |
+| frontend | `tsc` clean, `vite build` succeeds · *`tsc` re-run clean 5 Aug* |
 | pipeline | runs on `demo` and **both** real cases; every stage populates |
-| API | **15 endpoints, 18/18 as expected** — including 401 unauthenticated and 400 on a bad report format |
+| API | **15 endpoints, 18/18 as expected** — including 401 unauthenticated and 400 on a bad report format. *Now **17**; the 18-check sweep has not been re-run since 3 Aug* |
 | reports | PDF (`%PDF`, ~96 KB) and DOCX (`PK`, ~116 KB) both generate |
 
 Two things to know about the API surface before you go looking for a bug:
@@ -261,8 +290,15 @@ Two things to know about the API surface before you go looking for a bug:
   at `/health`; correlation hits are inside `POST /v1/analyze`; the **reject report** is at
   `GET /v1/data-quality/{ds}`, which matters because that report is how rule 2 is checked.
 
-Newest endpoint: `GET /v1/document-mentions/{ds}?identifier=&kind=` — the narrative paperwork
-indexed by the identifiers it names. See `GAPS.md` §7.3 for what it is and is not.
+Newest endpoint as of 31 Jul: `GET /v1/document-mentions/{ds}?identifier=&kind=` — the narrative
+paperwork indexed by the identifiers it names. See `GAPS.md` §7.3 for what it is and is not.
+
+**Since then (3 Aug):** `GET /v1/analyze/progress/{ds}` reports stage / percent / ETA for an
+in-flight analyze, `POST /v1/analyze` accepts `force` and returns `from_cache`, and `/v1/datasets`
+lists `cached`. Results now survive a restart as durable snapshots under `data/analysis_cache/`.
+`API.md` and `../COMPONENT_STATUS.md` §14 carry the detail — including the one that will catch you
+out: **a snapshot outlives a code change**, so force a re-run before believing that an edit did
+nothing.
 
 ---
 

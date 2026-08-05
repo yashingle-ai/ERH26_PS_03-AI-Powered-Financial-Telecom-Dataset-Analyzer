@@ -808,3 +808,64 @@ blocked on evidence rather than code. Full detail in `PS_COMPLIANCE_AND_FIX_PLAN
 
 `FIR-0006-2025 U` ingestion: 456,423 events · 344,047 transactions · 202 IP sessions.
 Its full-pipeline entity/correlation figures are pending a first run.
+
+---
+
+## 14. Result caching and run progress — added 3 Aug 2026
+
+Two components by Himal Rana (`401ac0d`, `fb0b016`), documented 5 Aug. They change how the API
+behaves across restarts, so read this before diagnosing "the figures did not change after my fix".
+
+| Component | Status | Evidence |
+|---|---|---|
+| `persistence/store.py` — durable snapshots | 🟢 **new** | Pickles the whole `Investigation` to `data/analysis_cache/<ds>__w<N>.pkl` with a SQLite index row. A restart reloads in milliseconds instead of re-parsing for 11–49 min |
+| `core/analyze_progress.py` — live progress | 🟢 **new** | Nine weighted stages with percent, elapsed and ETA, served at `GET /v1/analyze/progress/{ds}` |
+| `core/env.py` — repo-root `.env` | 🟢 **new** | via `python-dotenv` |
+| `models/canonical.py` — `AnalysisSnapshot` | 🟢 | index table: dataset, window, created_at, summary, file_counts, blob_path |
+
+### 14.1 Two persistence layers, deliberately separate
+
+`persist_investigation` (2026-07-08, review fix C1) and `save_analysis_snapshot` (3 Aug) look
+redundant and are not:
+
+| | `persist_investigation` | `save_analysis_snapshot` |
+|---|---|---|
+| Stores | events, entities, identifiers, links, risk, correlation hits | the entire `Investigation` object |
+| Format | relational rows, queryable | pickle blob + index row |
+| Purpose | **chain of custody** — a forensic record that survives the process and can be read by other tools | **speed** — avoid re-parsing a case the API has already analysed |
+| Rebuilds the served object? | **no** — cannot recover transfers, graph payload, medium hits, rejects, parsed_files | yes |
+
+Deleting either one breaks something the other does not cover.
+
+### 14.2 The cache is why a code change can appear to do nothing
+
+Two layers now sit in front of the pipeline: an in-process `lru_cache`, and the on-disk snapshot.
+The snapshot survives a restart, which is the point of it — and also means that after editing a
+profile, a threshold or any pipeline code, **the API keeps serving the pre-change figures until the
+snapshot is dropped.**
+
+Three ways to drop it:
+
+```bash
+POST /v1/analyze  {"dataset": "...", "force": true}   # this (dataset, window) only
+# an upload into the dataset                          # automatic, all windows
+rm -rf data/analysis_cache/                           # everything
+```
+
+This interacts directly with the A/B protocol in `handbook/MEASUREMENT.md`: **a flag flip does not
+invalidate a snapshot.** Running arm A, setting `ERAKSHAK_VALUE_TYPING=0`, and running arm B will
+return arm A's pickle and report no difference. Force both arms, or clear the cache between them.
+
+### 14.3 Limits worth knowing before building on it
+
+- **Progress is in-process.** It does not survive a restart and does not work across multiple
+  uvicorn workers. Both are acceptable for a single-container deployment and would need Redis or
+  similar otherwise.
+- **Polls hang rather than fail during heavy stages.** The pipeline is CPU-bound Python holding the
+  GIL, so the whole API is unresponsive while it parses. A client must treat a slow or failed poll
+  as "no news" — progress is decoration and must never be able to fail the analyze it describes.
+- **Snapshots are pickles**, so they are only loadable by a compatible build. A changed
+  `Investigation` shape silently invalidates them; `load_analysis_snapshot` catches the failure,
+  logs a warning and returns `None`, which correctly degrades to a fresh run.
+- **Nothing prunes `data/analysis_cache/`.** One blob per `(dataset, window)`; a real case is large.
+  Sweeping old blobs is unbuilt and is not currently a tracked gap.

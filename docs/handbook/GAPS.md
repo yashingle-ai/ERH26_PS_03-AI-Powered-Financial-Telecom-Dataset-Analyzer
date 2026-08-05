@@ -3,6 +3,10 @@
 Ranked by value, sized where a size was measured. A gap with no number beside it has not
 been measured, and that is said rather than guessed.
 
+> **Updated 5 Aug.** §8 records what landed on 3 and 5 August — durable snapshots, live
+> analyze progress, and the frontend wiring for both. Read it before starting anything on
+> this list; two of the items below were partly answered by that work.
+
 Three categories, and the distinction matters more than the ranking:
 
 - **Blocked on evidence** — no code change helps. Stop working on it.
@@ -151,7 +155,7 @@ These are not gaps in the code; nobody has exercised them.
 
 | Item | State |
 |---|---|
-| **Interactive UI** | `/ask` and `/quality` compile and serve 200. Nobody has typed a question, expanded a QuerySpec panel, or read the reject table in a browser. Given that `_app.quality.tsx` shipped with four type errors, runtime bugs are likely |
+| **Interactive UI** | `/ask` and `/quality` compile and serve 200. Nobody has typed a question, expanded a QuerySpec panel, or read the reject table in a browser. Given that `_app.quality.tsx` shipped with four type errors, runtime bugs are likely. **Still the highest-value open item as of 5 Aug.** Reading `/upload` closely for the first time immediately turned up a faked progress bar that had been there since 17 Jul and that nobody had noticed — see §8.2 |
 | **Gemini on real CDR** | 6/6 questions planned, 1.2–5.1 s each. Not re-run since the timeout fix |
 | **`docker build` in CI** | verified locally, cold, no cache. Not confirmed on a CI runner |
 | **F1 threshold calibration** | premise weakened — `FIR-0006` reaches 85.1 on the same config. Needs **re-scoping, not tuning** |
@@ -275,4 +279,99 @@ preventive and diagnostic, not a mis-ranking anyone observed. Do not cite it as 
 Min-max normalisation hands `0.0` both to the least anomalous *fitted* entity and to every entity the
 forest was never fitted on. `ml_scored` now distinguishes them, in the API, the database and the UI —
 "we looked and found nothing unusual" and "there was never anything to look at" are different
-findings. Closes gap D5 in `../gap_analysis.md`.
+findings. Closes gap D5 in `../archive/gap_analysis.md`.
+
+---
+
+## 8. Added 3–5 Aug
+
+This section exists because §6 above warns that the previous revision of this file *"sent you to
+build 3.1, which now exists"*. Two commits landed on 3 Aug carrying no documentation at all, which
+is the same failure one step earlier. Written up here so the next reader does not rebuild them.
+
+### 8.1 Durable analysis snapshots and live progress 🟢 **DONE `401ac0d`, `fb0b016`**
+
+Both by Himal Rana, 3 Aug. Neither appears anywhere else in the docs; the endpoint count in this
+package said 15 until 5 Aug and is now 17.
+
+**Snapshots.** `backend/app/persistence/store.py` gained `save_analysis_snapshot` /
+`load_analysis_snapshot` / `has_analysis_snapshot` / `list_analysis_snapshots` /
+`delete_analysis_snapshots`. A completed `Investigation` is pickled to
+`data/analysis_cache/<ds>__w<N>.pkl` with a SQLite index row (`AnalysisSnapshot`), so a restart no
+longer costs a re-parse. Written temp-then-rename, so a crash mid-write cannot leave a half-pickle.
+
+This is a different thing from the relational `persist_investigation` that was already there. That
+one stores a forensic **subset** — events, entities, risk — for chain of custody, and cannot rebuild
+the live object the API serves (transfers, graph payload, medium hits, rejects, parsed files). The
+snapshot is the whole object. Both exist on purpose; do not merge them.
+
+`POST /v1/analyze` gained **`force`** (drop the snapshot and re-run) and returns **`from_cache`**.
+`GET /v1/datasets` gained **`cached`**. An upload into a dataset drops its snapshots, so the API
+cannot serve figures that predate the new evidence.
+
+**Progress.** `backend/app/core/analyze_progress.py` — nine weighted stages (`parse` 55%,
+`normalize` 8, `resolve` 7, `documents` 5, `timeline` 5, `correlate` 8, `detect` 7, `graph` 4,
+`persist` 1), reported through a `contextvar` bound by the API thread so pipeline stages do not have
+to thread `(dataset, window)` through every call. Served at `GET /v1/analyze/progress/{ds}?window=`.
+In-process and single-worker only; a restart loses it.
+
+Also `backend/app/core/env.py`, which loads a repo-root `.env` via `python-dotenv`.
+
+> `python-dotenv` was added to `requirements.txt` but the change was **left uncommitted** until
+> 5 Aug, so `main` briefly could not start from a clean clone. Worth a glance at
+> `git status --porcelain` before calling something finished.
+
+### 8.2 The frontend ignored all of it — 🟢 **progress wired 5 Aug**, force/cache still open
+
+The backend had emitted real stage / percent / ETA since 3 Aug and nothing consumed it.
+`frontend/src/routes/_app.upload.tsx` faked the bar instead:
+
+```ts
+const tick = window.setInterval(() => setStage((s) => (s < 8 ? s + 1 : s)), 400);
+```
+
+Nine stages at 400 ms is **3.6 seconds of animation** in front of an 11-to-49-minute operation. The
+bar reaches "Stage 8/9" and stops, and from there a working run and a hung one look identical.
+
+**Fixed 5 Aug.** `hooks/use-analyze-progress.ts` polls `GET /v1/analyze/progress/{ds}` every 1.5 s
+while a run is in flight, and the page renders the **server's** stage list rather than its own.
+That mattered: the page's nine hardcoded labels (`Ingest`, `Money-flow`, `Report`) described a
+pipeline that does not exist in that order, and nothing tied the two lists together.
+
+Verified against a live API on `demo`, cold, cache cleared first — real intermediate states, not a
+shape assertion:
+
+```
+running parse     idx=0   0.0%  Parsing evidence files…
+running parse     idx=0  12.5%  Parsing axis_70348247710932.pdf
+running parse     idx=0  55.0%  Parsing ipdr_vi.csv
+running normalize idx=1  55.0%  Normalising fields & timestamps…
+running detect    idx=6  88.0%  Scoring risk & typologies…
+done    persist   idx=8 100.0%  Complete
+```
+
+Warm run on the same dataset: `from_cache = true` in **139 ms** against a cold run's full parse.
+
+Three properties are pinned by test in `use-analyze-progress.test.tsx`, the middle one being the
+one that matters: **a failed poll must not tear down the loop or blank the state.** The pipeline
+holds the GIL, so the API is unresponsive during heavy stages and polls fail *while everything is
+working correctly*. Confirmed by mutation — making a rejected poll clear state fails that test.
+
+Still open: neither `force` nor `from_cache` is sent or read by the UI, so an analyst cannot tell a
+fresh 49-minute run from a 130 ms cache hit, and **cannot re-run at all** once a snapshot exists —
+after changing a profile or a threshold the stale snapshot is served indefinitely. Tracked in
+`../WORK_PLAN_2026-08-05.md` phase 3.
+
+### 8.3 Documentation had accumulated three gap registers 🟢 **DONE 5 Aug**
+
+32 markdown files, of which 13 were stale or spent work orders, including **three generations of gap
+register** — this file plus two superseded ancestors, one of which still carried "highest value
+next: build the account↔phone bridge" three days after it was built.
+
+They are now in `../archive/` with `../archive/README.md` recording what each was and what replaced
+it, and `../README.md` is the index that distinguishes live from dead. `docs/yash development/` was
+renamed `docs/handbook/` — the space broke shell globs.
+
+**The rule that came out of it:** if a document goes out of date and you cannot fix it, *move it to
+`archive/`*. Leaving it in place is worse than deleting it, because a stale document is
+indistinguishable from a maintained one until someone acts on it.

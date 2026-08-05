@@ -74,11 +74,11 @@ frontend/dist/
 # hardcoded in one. Scratch that names evidence is evidence.
 artifacts/
 
-# `docs/yash development/` is the teammate onboarding entry point and IS tracked. It was briefly
+# `docs/handbook/` is the teammate onboarding entry point and IS tracked. It was briefly
 # untracked on 31 Jul because DECISIONS.md carried live MSISDNs, IMEIs and IMSIs from the FIR
 # IPDR — rule 4. Those are now redacted (the argument never needed the values, only that all six
 # appear in zero files outside `ipdr/`), so the folder is tracked again.
 #
 # Before committing anything in it, sweep for identifiers:
-#   grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" "docs/yash development/"*.md
+#   grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" "docs/handbook/"*.md
 docs/gaps_in_current_system.MD

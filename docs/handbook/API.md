@@ -1,7 +1,9 @@
-# API — 15 endpoints, verified
+# API — 17 endpoints, verified
 
 All paths, roles and response keys below were **enumerated from a running app**, not from the source.
-Verified 31 Jul: 18/18 checks including the auth and error paths.
+Verified 31 Jul: 18/18 checks including the auth and error paths. Two endpoints were added on
+3 Aug (`/v1/analyze/progress/{ds}`, and `/v1/datasets` gained `cached`) and are marked below;
+the 18-check sweep has not been re-run since.
 
 Base `/v1`, JWT bearer. `POST /v1/auth/token` and `/v1/auth/refresh` are public; **everything else
 requires the `analyst` role**. Interactive docs at `:8000/docs`.
@@ -11,7 +13,7 @@ requires the `analyst` role**. Interactive docs at `:8000/docs`.
 ## Two things that will cost you twenty minutes
 
 **`app.routes` shows only 6 entries.** FastAPI holds an included router as a single
-`_IncludedRouter`, so the 15 `/v1` endpoints do not appear when you iterate `app.routes`. Enumerate
+`_IncludedRouter`, so the 17 `/v1` endpoints do not appear when you iterate `app.routes`. Enumerate
 `backend.app.api.main.v1.routes` instead. A made-up path returns **404** while `/v1/datasets` returns
 **401**, which is how you tell "not mounted" from "needs auth" — that check is what proved the router
 was fine after the enumeration suggested otherwise.
@@ -34,8 +36,9 @@ was fine after the enumeration suggested otherwise.
 | `GET` | `/health` | public | liveness |
 | `POST` | `/v1/auth/token` | public | `access_token` (form: `username`, `password`) |
 | `POST` | `/v1/auth/refresh` | public | a new token |
-| `GET` | `/v1/datasets` | analyst | `datasets` |
-| `POST` | `/v1/analyze` | analyst | `dataset`, `window_minutes`, `summary`, `top_risk`, `correlation_hits`, `correlation_hits_medium`, `money_flow_series`, `file_counts` |
+| `GET` | `/v1/datasets` | analyst | `datasets`, **`cached`** (3 Aug — durable snapshots on disk) |
+| `POST` | `/v1/analyze` | analyst | `dataset`, `window_minutes`, **`from_cache`**, `summary`, `top_risk`, `correlation_hits`, `correlation_hits_medium`, `money_flow_series`, `file_counts`. Body takes **`force`** (3 Aug) |
+| `GET` | `/v1/analyze/progress/{ds}` | analyst | **new 3 Aug** — live stage / percent / ETA for an in-flight analyze |
 | `GET` | `/v1/entities/{ds}` | analyst | `total`, `items` — risk rows, ranked by `detection.risk_rank` |
 | `GET` | `/v1/events/{ds}` | analyst | `total`, `items` |
 | `GET` | `/v1/graph/{ds}` | analyst | `nodes`, `edges` |
@@ -49,12 +52,65 @@ was fine after the enumeration suggested otherwise.
 | `POST` | `/v1/upload/{ds}` | analyst | refuses `demo` and `smoke` |
 
 Every `{ds}` endpoint takes `?window=` (default 10) and goes through `_analyze()`, which is
-`lru_cache`d on `(dataset, window)` — so the first call to a real case costs 20–35 minutes and the
-rest are instant. Warm it deliberately before demoing.
+`lru_cache`d on `(dataset, window)` **and, since 3 Aug, backed by a durable snapshot on disk** — so
+the first call to a real case costs 20–35 minutes and the rest are instant, including after a
+restart. Warm it deliberately before demoing.
 
 ---
 
 ## The ones worth reading closely
+
+### `POST /v1/analyze` — caching, and how to defeat it
+
+Two layers, added 3 Aug (`401ac0d`):
+
+| layer | lives in | cleared by |
+|---|---|---|
+| `lru_cache` on `_analyze_uncoordinated` | process memory | a restart, an upload, or `force` |
+| **durable snapshot** — the pickled `Investigation` plus a SQLite index row | `data/analysis_cache/<ds>__w<N>.pkl` | an upload into that dataset, or `force` |
+
+The snapshot is what makes a restart survivable: reloading `fir-65-2024` used to cost 11 minutes
+and now costs milliseconds. It is written temp-file-then-rename, so a crash mid-write cannot leave a
+half-pickle that later loads as a corrupt `Investigation`.
+
+`force: true` deletes the snapshot for that `(dataset, window)` and re-runs the full pipeline.
+**You need it after changing a profile, a threshold or any pipeline code** — otherwise the snapshot
+is served indefinitely and the API confidently returns figures that predate your change. An upload
+into a dataset clears its snapshots automatically for the same reason.
+
+`from_cache` in the response says which happened. A 130 ms cache hit and a 49-minute run are
+otherwise indistinguishable to a caller.
+
+> Concurrency is unchanged: one lock per `(dataset, window)`, so simultaneous identical requests
+> share a single run rather than starting two ~3.5 GB pipelines.
+
+### `GET /v1/analyze/progress/{ds}?window=` — what a long run is doing
+
+Added 3 Aug (`fb0b016`). The pipeline is synchronous and CPU-bound, so a real case leaves the caller
+holding an open request for 11–49 minutes with no signal. This endpoint is polled by a *second*
+request to report where the first one has got to.
+
+```json
+{ "status": "running", "stage": "correlate", "stage_label": "Correlating call / IP / transfers",
+  "percent": 71.4, "elapsed_seconds": 402.1, "eta_seconds": 161.0,
+  "done": 812, "total": 986, "message": "…", "stages": [ … ] }
+```
+
+`status` is `idle` (no job for that key), `running`, `done` or `error`. The nine stages and their
+weights come back in `stages`, so a client should **render the server's list rather than hardcode
+its own** — the two drift otherwise, and nothing tests that they agree. Progress is held in a
+module-level dict keyed by `(dataset, window)`, guarded by a lock, and the pipeline stages report
+into it through a `contextvar` bound by the API thread.
+
+Two properties worth knowing before you build on it:
+
+- **It is in-process.** A restart loses it, and it does not work across multiple workers.
+- **Polls will hang, not fail, during heavy stages.** The pipeline holds the GIL, so the whole API
+  is unresponsive while it parses. Treat a slow or failed poll as "no news", never as an error —
+  progress is decoration and must never be able to fail the analyze itself.
+
+When a durable snapshot is hit, `finish(from_cache=True)` reports `"Loaded from cache"` and the
+run never enters the pipeline body at all.
 
 ### `GET /v1/events/{ds}` — FR-15
 
