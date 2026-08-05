@@ -441,7 +441,23 @@ export const api = {
     return request<{ datasets: string[] }>("/v1/datasets");
   },
 
-  analyze(dataset: string, windowMinutes = 10, persist = false) {
+  /**
+   * Run (or load) the pipeline for a dataset.
+   *
+   * `force` drops the durable snapshot for this (dataset, window) and re-runs from
+   * scratch. Needed after a profile, threshold or pipeline change — otherwise the
+   * snapshot is served indefinitely and the API returns figures that predate the
+   * edit. It costs a full parse, so callers must confirm before passing it.
+   *
+   * The third parameter stays positional for `persist` so existing callers are
+   * unaffected; `force` is opt-in via the options object.
+   */
+  analyze(
+    dataset: string,
+    windowMinutes = 10,
+    persist = false,
+    opts: { force?: boolean } = {},
+  ) {
     return request<AnalyzeResponse>("/v1/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -453,6 +469,7 @@ export const api = {
         dataset,
         window_minutes: windowMinutes,
         persist,
+        force: opts.force ?? false,
       }),
     });
   },

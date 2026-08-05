@@ -321,7 +321,7 @@ Also `backend/app/core/env.py`, which loads a repo-root `.env` via `python-doten
 > 5 Aug, so `main` briefly could not start from a clean clone. Worth a glance at
 > `git status --porcelain` before calling something finished.
 
-### 8.2 The frontend ignored all of it — 🟢 **progress wired 5 Aug**, force/cache still open
+### 8.2 The frontend ignored all of it — 🟢 **DONE 5 Aug**
 
 The backend had emitted real stage / percent / ETA since 3 Aug and nothing consumed it.
 `frontend/src/routes/_app.upload.tsx` faked the bar instead:
@@ -357,10 +357,27 @@ one that matters: **a failed poll must not tear down the loop or blank the state
 holds the GIL, so the API is unresponsive during heavy stages and polls fail *while everything is
 working correctly*. Confirmed by mutation — making a rejected poll clear state fails that test.
 
-Still open: neither `force` nor `from_cache` is sent or read by the UI, so an analyst cannot tell a
-fresh 49-minute run from a 130 ms cache hit, and **cannot re-run at all** once a snapshot exists —
-after changing a profile or a threshold the stale snapshot is served indefinitely. Tracked in
-`../WORK_PLAN_2026-08-05.md` phase 3.
+**`force` and `from_cache` wired the same day.** A "Re-run" button beside "Run pipeline" passes
+`force: true` behind a confirm — it discards the snapshot and re-parses, which is 11–49 minutes on a
+real case, so a misclick must not be able to trigger it. The panel then says **From saved analysis**
+or **Freshly parsed** rather than leaving a 130 ms cache hit and a 49-minute run looking identical.
+
+Measured live on `demo`, three calls in sequence:
+
+| call | `from_cache` | wall |
+|---|---|---|
+| snapshot present | `true` | 0.59 s |
+| `force: true` | `false` | **6.57 s** — a real parse |
+| snapshot present again | `true` | 0.19 s |
+
+Events identical at 5,622 across all three, which is the check that matters: forcing must change
+the *path*, not the answer.
+
+One trap is pinned by test in `api.test.ts`. `onClick={start}` hands the handler a `MouseEvent`,
+which is truthy — so a `start(force)` signature taking force positionally from that would discard
+the saved analysis on **every** click of the ordinary "Run pipeline" button. The page uses
+`onClick={() => start()}`, and the API test asserts `force` serialises as a boolean `false` when
+absent rather than as a truthy object.
 
 ### 8.3 Documentation had accumulated three gap registers 🟢 **DONE 5 Aug**
 

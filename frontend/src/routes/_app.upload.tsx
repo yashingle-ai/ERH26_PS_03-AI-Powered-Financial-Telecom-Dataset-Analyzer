@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import {
   UploadCloud, FileSpreadsheet, PhoneCall, Globe, CheckCircle2,
-  AlertTriangle, Loader2, X, FileWarning,
+  AlertTriangle, Loader2, X, FileWarning, RotateCw, Database,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -82,6 +82,12 @@ function UploadPage() {
   /** The dataset an analyze is running against — also the progress poll key. */
   const [runningDs, setRunningDs] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  /**
+   * Whether the last completed analyze was served from a saved snapshot.
+   * `null` = nothing has run yet. A 130 ms cache hit and a 49-minute run are
+   * otherwise indistinguishable, which matters after a code change.
+   */
+  const [servedFromCache, setServedFromCache] = useState<boolean | null>(null);
   const { dataset, setDataset, windowMinutes } = useInvestigation();
   // Do NOT prefill with a sample dataset. Prefilling the active dataset means a
   // drag-and-upload without editing the name writes a real case into `demo` or
@@ -145,25 +151,44 @@ function UploadPage() {
     }
   }, [target, queued, kind, setDataset, qc]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (force = false) => {
     const ds = target.trim() || dataset;
     if (!ds) {
       toast.error("No active dataset selected");
       return;
     }
+    // A forced run deletes the saved analysis and re-parses the whole case —
+    // 11 to 49 minutes on a real FIR folder. A misclick must not be able to do
+    // that silently.
+    if (force && !window.confirm(
+      `Re-run the full pipeline on "${ds}"?\n\n` +
+      "This discards the saved analysis and parses every file again. On a real " +
+      "case that takes 11–49 minutes. Do this after changing a profile, a " +
+      "threshold, or the pipeline itself — otherwise the saved result is fine.",
+    )) return;
+
     setRunning(true);
     setRunningDs(ds);
     setFinished(false);
     setSummary(null);
-    toast.message(`Running pipeline on ${ds}…`);
+    setServedFromCache(null);
+    toast.message(force ? `Re-running pipeline on ${ds}…` : `Running pipeline on ${ds}…`);
     try {
-      const result = await api.analyze(ds, windowMinutes);
+      const result = await api.analyze(ds, windowMinutes, false, { force });
       setFinished(true);
+      setServedFromCache(result.from_cache === true);
       setSummary(
         `${result.summary.events} events · ${result.summary.entities} entities · ${result.summary.correlation_hits} hits`,
       );
       await qc.invalidateQueries();
-      toast.success("Pipeline complete", { description: `Dataset ${ds}` });
+      toast.success(
+        result.from_cache ? "Loaded saved analysis" : "Pipeline complete",
+        {
+          description: result.from_cache
+            ? `${ds} — no files were re-parsed. Use Re-run to force a fresh pass.`
+            : `Dataset ${ds}`,
+        },
+      );
     } catch (e) {
       toast.error((e as Error).message || "Pipeline failed");
     } finally {
@@ -198,11 +223,24 @@ function UploadPage() {
         title="Upload & ingest datasets"
         description="Drop Bank/CDR/IPDR files here, or point the pipeline at a dataset already on disk."
         actions={
-          <Button size="sm" onClick={start} disabled={running || uploading || !(target.trim() || dataset)}
-                  className="gap-2 bg-primary text-primary-foreground hover:opacity-90">
-            <Loader2 className={`h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
-            {running ? "Running…" : "Run pipeline"}
-          </Button>
+          <div className="flex gap-2">
+            {/* `() => start()` deliberately, not `start`: an onClick handler is
+                called with the MouseEvent, which is truthy and would arrive as
+                `force` — silently discarding the saved analysis on every click. */}
+            <Button size="sm" onClick={() => start()}
+                    disabled={running || uploading || !(target.trim() || dataset)}
+                    className="gap-2 bg-primary text-primary-foreground hover:opacity-90">
+              <Loader2 className={`h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
+              {running ? "Running…" : "Run pipeline"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => start(true)}
+                    disabled={running || uploading || !(target.trim() || dataset)}
+                    title="Discard the saved analysis and parse every file again. Needed after changing a profile, a threshold or the pipeline."
+                    className="gap-2">
+              <RotateCw className="h-3.5 w-3.5" />
+              Re-run
+            </Button>
+          </div>
         }
       />
 
@@ -320,7 +358,7 @@ function UploadPage() {
             ))}
           </ul>
           {stored > 0 && (
-            <Button size="sm" className="mt-3" onClick={start} disabled={running}>
+            <Button size="sm" className="mt-3" onClick={() => start()} disabled={running}>
               Run pipeline on {target.trim() || dataset}
             </Button>
           )}
@@ -341,7 +379,22 @@ function UploadPage() {
             {/* An ETA is only shown while running: after completion it is 0 and
                 reads as though something is still pending. */}
             {running && eta && <span title="Estimated time remaining">~{eta} left</span>}
-            {!running && (finished ? "Complete" : "Idle")}
+            {!running && !finished && "Idle"}
+            {!running && finished && (
+              servedFromCache
+                ? (
+                  <span title="Served from a saved analysis — no files were re-parsed"
+                        className="flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-primary">
+                    <Database className="h-3 w-3" /> From saved analysis
+                  </span>
+                )
+                : (
+                  <span title="A full pipeline run — every file was parsed"
+                        className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-widest">
+                    Freshly parsed
+                  </span>
+                )
+            )}
           </div>
         </div>
 
