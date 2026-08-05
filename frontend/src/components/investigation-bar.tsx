@@ -64,6 +64,7 @@ export function InvestigationBar() {
               <button
                 onClick={() => navigate({ to: "/timeline", search: { entity: pinnedEntity.id } as any })}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary"
+                aria-label="View pinned entity on the timeline"
                 title="View on Timeline"
               >
                 <Clock className="h-3.5 w-3.5" />
@@ -71,6 +72,7 @@ export function InvestigationBar() {
               <button
                 onClick={() => navigate({ to: "/network", search: { node: pinnedEntity.id } as any })}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary"
+                aria-label="View pinned entity on the network graph"
                 title="View on Graph"
               >
                 <Share2 className="h-3.5 w-3.5" />
@@ -78,6 +80,7 @@ export function InvestigationBar() {
               <button
                 onClick={() => navigate({ to: "/entities", search: { id: pinnedEntity.id, rule: undefined } as any })}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary"
+                aria-label="View detections for the pinned entity"
                 title="View Detections"
               >
                 <ShieldAlert className="h-3.5 w-3.5" />
@@ -121,6 +124,7 @@ export function InvestigationBar() {
             <button
               onClick={clearBreadcrumbs}
               className="ml-1 shrink-0 rounded p-1 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+              aria-label="Clear the navigation trail"
               title="Clear trail"
             >
               <Trash2 className="h-3 w-3" />
@@ -146,6 +150,7 @@ export function InvestigationBar() {
           <button
             onClick={() => setPinnedEntity(null)}
             className="ml-auto shrink-0 rounded-md p-1.5 text-muted-foreground/60 transition-colors hover:bg-destructive/15 hover:text-destructive"
+            aria-label="Unpin the current entity"
             title="Unpin entity"
           >
             <X className="h-3.5 w-3.5" />

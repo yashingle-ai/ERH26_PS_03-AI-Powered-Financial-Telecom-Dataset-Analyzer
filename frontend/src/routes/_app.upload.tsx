@@ -398,11 +398,16 @@ function UploadPage() {
           </div>
         </div>
 
-        <Progress value={percent} className="mb-2 h-1.5" />
+        <Progress value={percent} className="mb-2 h-1.5"
+                  aria-label="Pipeline progress" />
 
         {/* The server's own message — "Parsing evidence files 812/986" — is the
-            only thing that distinguishes a working long run from a hung one. */}
-        <div className="text-mono mb-4 flex min-h-[16px] items-center gap-2 text-[11px]">
+            only thing that distinguishes a working long run from a hung one.
+            aria-live="polite" so a screen-reader user is told which stage is
+            running without having to poll the region manually; a run can last
+            49 minutes and silence is indistinguishable from a hang. */}
+        <div className="text-mono mb-4 flex min-h-[16px] items-center gap-2 text-[11px]"
+             role="status" aria-live="polite">
           {running && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[color:var(--risk-med)]" />}
           <span className="truncate text-muted-foreground">
             {progress?.message || (running ? "Starting pipeline…" : "")}

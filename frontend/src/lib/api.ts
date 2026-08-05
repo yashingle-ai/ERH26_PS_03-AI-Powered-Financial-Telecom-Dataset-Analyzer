@@ -113,6 +113,46 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return data as T;
 }
 
+/**
+ * Binary sibling of `request` for endpoints that stream a file.
+ *
+ * Kept separate rather than adding a flag to `request`: that one reads the body as
+ * text to parse JSON, which would corrupt a PDF. The error path still decodes as
+ * text, because a failure returns the normal JSON error schema even from a route
+ * whose success path is binary.
+ */
+async function requestBlob(path: string, opts: RequestOptions = {}): Promise<Blob> {
+  const headers: Record<string, string> = { ...(opts.headers || {}) };
+  await ensureFreshToken(opts.minTokenSeconds);
+  const token = getToken();
+  if (!token) throw new ApiError(401, "Not signed in");
+  headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: opts.method || "GET",
+    headers,
+    body: opts.body ?? null,
+  });
+
+  if (res.status === 401) clearSession();
+
+  if (!res.ok) {
+    const text = await res.text();
+    let message = res.statusText || "Request failed";
+    let code: number | undefined;
+    try {
+      const err = JSON.parse(text) as { error?: { message?: string; code?: number } };
+      message = err?.error?.message || message;
+      code = err?.error?.code;
+    } catch {
+      if (text) message = text;
+    }
+    throw new ApiError(res.status, message, code);
+  }
+
+  return res.blob();
+}
+
 export type TokenResponse = { access_token: string; token_type: string };
 
 export type AnalyzeSummary = {
@@ -471,6 +511,25 @@ export const api = {
         persist,
         force: opts.force ?? false,
       }),
+    });
+  },
+
+  /**
+   * Generate the forensic report (FR-16) and return it as a file blob.
+   *
+   * The generator has existed since `7d20672` and only Streamlit could reach it;
+   * the React app — the primary UI — offered `window.print()` and told the user
+   * "PDF/STR export endpoints are not exposed on the API yet". They are.
+   *
+   * Server-side this reaches into matplotlib and reportlab and re-reads the whole
+   * investigation, so it is slow enough to need the long token minimum.
+   */
+  report(dataset: string, fmt: "pdf" | "docx" = "pdf", windowMinutes = 10) {
+    return requestBlob(`/v1/report/${encodeURIComponent(dataset)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      minTokenSeconds: 20 * 60,
+      body: JSON.stringify({ fmt, window_minutes: windowMinutes }),
     });
   },
 

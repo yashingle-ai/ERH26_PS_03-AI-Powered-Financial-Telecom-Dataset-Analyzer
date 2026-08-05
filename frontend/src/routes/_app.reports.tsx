@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/case-topbar";
 import { Button } from "@/components/ui/button";
-import { Download, FileWarning } from "lucide-react";
+import { Download, FileText, Printer, Loader2 } from "lucide-react";
 import { LoadingState } from "@/components/shared/loading-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { toast } from "sonner";
+import { useCallback, useState } from "react";
+import { api } from "@/lib/api";
 import { useAnalyze } from "@/hooks/use-investigation-data";
 import { useInvestigation } from "@/lib/investigation-context";
 import { mapCaseFromAnalyze, mapEntity, mapHit } from "@/lib/mappers";
@@ -14,9 +16,50 @@ export const Route = createFileRoute("/_app/reports")({
   component: ReportsPage,
 });
 
+/**
+ * Save a fetched blob to disk.
+ *
+ * The object URL is revoked on the next tick rather than immediately: Firefox
+ * cancels an in-flight download if the URL is revoked before the click is
+ * processed.
+ */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function ReportsPage() {
   const { dataset, windowMinutes } = useInvestigation();
   const { data, isLoading, error } = useAnalyze();
+  const [exporting, setExporting] = useState<"pdf" | "docx" | null>(null);
+
+  const exportReport = useCallback(async (fmt: "pdf" | "docx") => {
+    const ds = dataset || data?.dataset;
+    if (!ds) {
+      toast.error("No active dataset");
+      return;
+    }
+    setExporting(fmt);
+    toast.message(`Generating ${fmt.toUpperCase()} report…`, {
+      description: "The generator re-reads the full investigation; this takes a moment.",
+    });
+    try {
+      const blob = await api.report(ds, fmt, windowMinutes);
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `erakshak-${ds}-w${windowMinutes}-${stamp}.${fmt}`);
+      toast.success(`${fmt.toUpperCase()} report downloaded`, { description: ds });
+    } catch (e) {
+      toast.error((e as Error).message || `Could not generate the ${fmt} report`);
+    } finally {
+      setExporting(null);
+    }
+  }, [dataset, data?.dataset, windowMinutes]);
 
   if (isLoading) {
     return <LoadingState message="Preparing report preview…" />;
@@ -35,14 +78,29 @@ function ReportsPage() {
       <PageHeader
         eyebrow={`${c.code} · Report drafts`}
         title="Reports"
-        description="Preview from live analyze results. PDF/STR export endpoints are not exposed on the API yet."
+        description="Preview from live analyze results. Export generates the full forensic report server-side, including the STR draft and the detection audit."
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-2 opacity-50 cursor-not-allowed" disabled title="STR export endpoint not yet available in the API">
-              <FileWarning className="h-3.5 w-3.5" /> Export STR · Coming Soon
+            <Button variant="outline" size="sm" className="no-print gap-2"
+                    onClick={() => window.print()} disabled={exporting !== null}
+                    title="Print this preview from the browser">
+              <Printer className="h-3.5 w-3.5" /> Print preview
             </Button>
-            <Button size="sm" className="gap-2 bg-primary text-primary-foreground hover:opacity-90" onClick={() => window.print()}>
-              <Download className="h-3.5 w-3.5" /> Export Forensic Report (PDF)
+            <Button variant="outline" size="sm" className="no-print gap-2"
+                    onClick={() => exportReport("docx")} disabled={exporting !== null}
+                    title="Full forensic report as a Word document">
+              {exporting === "docx"
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <FileText className="h-3.5 w-3.5" />}
+              Export DOCX
+            </Button>
+            <Button size="sm" className="no-print gap-2 bg-primary text-primary-foreground hover:opacity-90"
+                    onClick={() => exportReport("pdf")} disabled={exporting !== null}
+                    title="Full forensic report as a PDF, generated server-side">
+              {exporting === "pdf"
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Download className="h-3.5 w-3.5" />}
+              Export PDF
             </Button>
           </>
         }

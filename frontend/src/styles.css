@@ -516,6 +516,39 @@
   }
 }
 
+/* ─── Skip link ────────────────────────────────────────────
+   Off-screen until focused, then pinned top-left. Uses a real off-screen
+   position rather than `display: none`, which would remove it from the tab
+   order entirely and defeat the purpose. */
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  border-radius: 0 0 0.375rem 0;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  left: 0;
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* The skip target must not draw a focus ring — focus lands there
+   programmatically, and an outline round the whole page reads as an error. */
+main:focus,
+main:focus-visible {
+  outline: none;
+}
+
 /* ─── Print Styles ─────────────────────────────────────── */
 
 @media print {

@@ -155,7 +155,7 @@ These are not gaps in the code; nobody has exercised them.
 
 | Item | State |
 |---|---|
-| **Interactive UI** | `/ask` and `/quality` compile and serve 200. Nobody has typed a question, expanded a QuerySpec panel, or read the reject table in a browser. Given that `_app.quality.tsx` shipped with four type errors, runtime bugs are likely. **Still the highest-value open item as of 5 Aug.** Reading `/upload` closely for the first time immediately turned up a faked progress bar that had been there since 17 Jul and that nobody had noticed — see §8.2 |
+| **Interactive UI** | `/ask` and `/quality` compile and serve 200. Nobody has typed a question, expanded a QuerySpec panel, or read the reject table in a browser. Given that `_app.quality.tsx` shipped with four type errors, runtime bugs are likely. **Still the highest-value open item as of 5 Aug — and the evidence for that got stronger.** Reading two pages against the API turned up a faked progress bar (§8.2) and a page announcing that a working endpoint did not exist (§8.3). Both had been live for weeks; neither is the kind of defect any test catches. `/ask`, `/quality`, `/network`, `/timeline` and `/entities` have still never been opened |
 | **Gemini on real CDR** | 6/6 questions planned, 1.2–5.1 s each. Not re-run since the timeout fix |
 | **`docker build` in CI** | verified locally, cold, no cache. Not confirmed on a CI runner |
 | **F1 threshold calibration** | premise weakened — `FIR-0006` reaches 85.1 on the same config. Needs **re-scoping, not tuning** |
@@ -379,7 +379,75 @@ the saved analysis on **every** click of the ordinary "Run pipeline" button. The
 `onClick={() => start()}`, and the API test asserts `force` serialises as a boolean `false` when
 absent rather than as a truthy object.
 
-### 8.3 Documentation had accumulated three gap registers 🟢 **DONE 5 Aug**
+### 8.3 The Reports page said a working feature did not exist 🟢 **DONE 5 Aug**
+
+Found while starting Sprint 5 of `../../artifacts/07_implementation_roadmap.md`. The page read:
+
+> *"PDF/STR export endpoints are not exposed on the API yet."*
+
+`POST /v1/report/{ds}` has existed since `7d20672`, is documented in `API.md`, and streams PDF
+(`%PDF`, ~93 KB) and DOCX (`PK`, ~123 KB). The React app — the primary UI — offered
+`window.print()` of the on-screen preview and a permanently disabled "Export STR · Coming Soon"
+button. The full server-side report, which is FR-16, **the problem statement's headline
+deliverable**, was reachable only from Streamlit.
+
+Same shape as §8.2: the backend shipped a capability, nothing consumed it, and the UI actively told
+the user it was unavailable. Worth naming as a pattern — twice in one week, both found only by
+reading the frontend against the API rather than by any test. Nothing catches "the UI claims a
+feature is missing"; only opening the page does.
+
+Now wired: real **Export PDF** and **Export DOCX** buttons, with the print-preview action kept
+separately for what it actually is. `api.ts` gained `requestBlob`, a binary sibling of `request` —
+the existing helper reads the body as text to parse JSON, which corrupts a PDF.
+
+Verified against a live API on `demo`:
+
+| call | result |
+|---|---|
+| `fmt: "pdf"` | **95,984 bytes**, magic `%PDF` |
+| `fmt: "docx"` | **115,891 bytes**, magic `PK\x03\x04` |
+| `fmt: "rtf"` | **400**, `{"error":{"code":400,"message":"fmt must be 'pdf' or 'docx'"}}` |
+
+The third row is why `requestBlob` still decodes its *error* path as text: a route whose success
+body is binary returns the ordinary JSON error schema on failure, and reading that as a blob would
+have surfaced "Bad Request" instead of the message that says what to fix.
+
+### 8.4 Sprint 5 of the frontend roadmap 🟢 **DONE 5 Aug**, with two items closed as already-built
+
+`artifacts/07_implementation_roadmap.md` Sprints 1–4 shipped in `4ce06ab`; Sprint 5 never started.
+
+| Item | Outcome |
+|---|---|
+| 5.1 Print stylesheet | **Already existed** — a complete `@media print` block with `@page`, hidden chrome and a `.print-container` at `styles.css:521`. Not rebuilt. Its sibling item, "wire export buttons when the backend adds report endpoints", *was* outstanding — §8.3 |
+| 5.2 Integration tests | `api.test.ts`, `mappers.test.ts`, `use-analyze-progress.test.tsx`. **2 → 24 tests** |
+| 5.3 Accessibility | Skip-to-content link (a keyboard user previously tabbed through 10 sidebar links on every page load); `aria-label` on five icon-only buttons that carried only `title`; `role="status" aria-live="polite"` on the pipeline message, so a 49-minute run announces its stage instead of going silent |
+| 5.4 Performance | **Measured, not changed** — see below |
+
+The mapper tests are weighted towards absence rather than happy paths, because that is where this
+project's meaning lives: `mlScored` defaulting to `true` when an older backend omits the field
+(defaulting to `false` would relabel real measurements as unexamined), and `typologies_fired`
+coming from the server rather than being re-derived from a flag list that can be truncated.
+
+**Bundle audit — findings only, nothing applied.** Production build, 43 chunks, 1.3 MB JS + 104 KB
+CSS uncompressed:
+
+| chunk | size | what dominates it |
+|---|---|---|
+| `_app.overview` | **365 kB** | recharts |
+| `index` | **341 kB** | react-dom — the vendor chunk |
+| `case-topbar` | 128 kB | |
+| `_app.network` | 41 kB | the D3 force graph, which is *not* the problem it was assumed to be |
+
+Route-level code splitting works: every route is its own chunk and the graph page is 41 kB, so the
+roadmap's proposed **Web Worker for graph layout is not justified** — it would rewrite a working D3
+simulation for a chunk that is 11% of the largest one. The real weight is recharts on the overview
+page, and the honest fix there is a lazy import, not a rewrite.
+
+Deliberately not applied: the constraint on this work was *do not harm existing features*, and a
+speculative bundle gain does not outweigh a working visualisation. Recorded here so the next person
+starts from the measurement rather than the assumption.
+
+### 8.5 Documentation had accumulated three gap registers 🟢 **DONE 5 Aug**
 
 32 markdown files, of which 13 were stale or spent work orders, including **three generations of gap
 register** — this file plus two superseded ancestors, one of which still carried "highest value

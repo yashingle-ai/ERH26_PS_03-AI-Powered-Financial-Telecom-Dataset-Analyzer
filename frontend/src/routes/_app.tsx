@@ -23,11 +23,17 @@ function AppLayout() {
   return (
     <InvestigationProvider>
       <SidebarProvider defaultOpen>
+        {/* Visually hidden until focused. Without it a keyboard user tabs through
+            the whole sidebar — 10 nav links plus the dataset and window controls —
+            on every page load before reaching the content. */}
+        <a href="#main-content" className="skip-link">Skip to main content</a>
         <div className="flex min-h-screen w-full">
           <AppSidebar />
           <SidebarInset className="flex min-w-0 flex-1 flex-col bg-transparent">
             <CaseTopbar />
-            <main className="flex-1 animate-fade-up px-6 py-6">
+            {/* tabIndex={-1} so the skip link can move focus here, not just scroll.
+                Scrolling alone leaves the next Tab back at the top of the sidebar. */}
+            <main id="main-content" tabIndex={-1} className="flex-1 animate-fade-up px-6 py-6">
               <Outlet />
             </main>
           </SidebarInset>
