@@ -13,6 +13,9 @@ and refuses members whose path escapes the destination directory.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 import zipfile
 from pathlib import Path
 
@@ -23,6 +26,29 @@ log = get_logger(__name__)
 # macOS resource-fork mirrors and AppleDouble sidecars — same rule the directory walk uses.
 _SKIP_PARTS = {"__MACOSX"}
 
+#: Longest archive-derived slice allowed in a scratch directory name.
+#:
+#: Windows refuses a path over 260 characters unless LongPathsEnabled is set, and it is
+#: off by default. Scratch directory names were built from the archive's own filename,
+#: which real case material makes enormous: operators mail statements as a reply whose
+#: subject becomes the filename, so `FIR 65-2024` carries archives 145 characters long
+#: before the extension. Nesting compounds it — outer directory, then a `__nested`
+#: directory per level, then the member's own path — and on that case it crossed 260 and
+#: members came back `[WinError 206] The filename or extension is too long`. That is
+#: evidence lost to a path length: the reject entry says "unreadable", which reads like a
+#: corrupt exhibit rather than a limit we imposed on ourselves.
+#:
+#: These names are disposable — nothing downstream reads them, since rejects are keyed on
+#: the original archive name — so bounding them costs nothing. The hash keeps two archives
+#: sharing a 32-character prefix from extracting over each other.
+_MAX_SCRATCH_COMPONENT = 32
+
+
+def scratch_dirname(stem: str, salt: str, suffix: str = "") -> str:
+    """Bounded, collision-resistant directory name for extracting `stem` into scratch."""
+    digest = hashlib.sha1(salt.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+    return f"{stem[:_MAX_SCRATCH_COMPONENT]}-{digest}{suffix}"
+
 
 def _is_noise(name: str) -> bool:
     parts = Path(name).parts
@@ -32,12 +58,43 @@ def _is_noise(name: str) -> bool:
     return base.startswith("._") or base.startswith("~$")
 
 
+#: Characters Windows refuses in a filename. A ZIP written on Linux or macOS carries them
+#: happily, and real evidence does: a Bandhan reply in `FIR 65-2024` ships members under
+#: `summary_BNB-<ref>_FIR 0065:2024_17_06_2025`. On Windows every one of those failed with
+#: `[WinError 267] The directory name is invalid` — recorded as "member unreadable", which
+#: reads like a corrupt exhibit rather than a name our own filesystem cannot represent.
+_WINDOWS_ILLEGAL = '<>:"|?*'
+
+
+def _sanitise_for_windows(member: str) -> str:
+    """Rewrite a member path so Windows can represent it, component by component.
+
+    Only characters Windows actually refuses are touched, so this can never rename a
+    member that would have extracted anyway — it strictly converts a total loss into a
+    readable file. `.` and `..` are passed through untouched so the traversal check below
+    still sees them for what they are.
+    """
+    out: list[str] = []
+    for part in re.split(r"[\\/]", member):
+        if not part:
+            continue
+        if part in (".", ".."):
+            out.append(part)
+            continue
+        clean = "".join("_" if ch in _WINDOWS_ILLEGAL else ch for ch in part)
+        # Windows also refuses a trailing dot or space on a path component.
+        out.append(clean.rstrip(" .") or "_")
+    return "/".join(out)
+
+
 def _safe_destination(dest: Path, member: str) -> Path | None:
     """Resolve a member path inside `dest`, or None if it escapes.
 
     A crafted archive can carry `../../etc/passwd` or an absolute path; zipfile.extract
     sanitises some of this but not all of it across versions, so the check is explicit.
     """
+    if os.name == "nt":
+        member = _sanitise_for_windows(member)
     target = (dest / member).resolve()
     try:
         target.relative_to(dest.resolve())
@@ -199,7 +256,7 @@ def extract_archive(path: str, dest: Path, *, max_total_bytes: int,
               count=encrypted)
 
     for inner in nested:
-        sub = dest / f"{inner.stem}__nested"
+        sub = dest / scratch_dirname(inner.stem, str(inner), suffix="__nested")
         out.extend(extract_archive(str(inner), sub, max_total_bytes=max_total_bytes,
                                    max_depth=max_depth, _depth=_depth + 1, _budget=_budget,
                                    skipped_out=skipped_out))

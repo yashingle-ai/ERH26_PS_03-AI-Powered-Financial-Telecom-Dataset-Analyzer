@@ -258,6 +258,107 @@ def test_archive_respects_expansion_budget(tmp_path):
     assert len(extracted) == 1  # first fits, second exceeds the remaining budget
 
 
+def test_scratch_dirname_is_bounded_and_collision_resistant():
+    """Two archives sharing a long prefix must not extract over each other."""
+    from backend.app.ingestion.parsers import archive
+
+    long_stem = "Fw__DO_DEBIT_FREEZE_and_also_provide_all_details_of_below_mentions" * 3
+    a = archive.scratch_dirname(long_stem, "/case/a/x.zip")
+    b = archive.scratch_dirname(long_stem, "/case/b/x.zip")
+
+    assert len(a) <= archive._MAX_SCRATCH_COMPONENT + 9
+    assert a != b, "same prefix, different archive — names must not collide"
+    assert a == archive.scratch_dirname(long_stem, "/case/a/x.zip"), "must be stable"
+
+
+def test_nested_archive_members_survive_long_source_names(tmp_path):
+    """A long archive name must not push nested members past the 260-char Windows limit.
+
+    Operators mail statements as a reply, so the mail subject becomes the filename: real
+    `FIR 65-2024` archives run to 145 characters. The scratch directory was named after
+    the archive at *every* nesting level, so outer + `__nested` + the member's own path
+    crossed 260 and the members came back `[WinError 206] The filename or extension is
+    too long`. Evidence lost to a path length we imposed on ourselves — and recorded as
+    "unreadable", which reads like a corrupt exhibit.
+
+    Asserted as a length invariant rather than via the OS, so it also fails on a platform
+    that happens to allow the long path.
+    """
+    import io
+    import shutil
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    from backend.app.ingestion.parsers import archive
+
+    # The real shape: a ~145-char reply-mail name. Both levels are given one, so that a
+    # regression at *either* the outer (service._walk) or the nested (extract_archive)
+    # naming blows the budget on its own — with only one of them long, the other's
+    # bounding hides the fault and this test passes while the bug is live.
+    outer_stem = ("Fw__DO_DEBIT_FREEZE_and_also_provide_all_details_of_below_mentions_"
+                  "Debit_card_which_is__linked_with_bank_accounts_Regarding_CCPS_FIR_0065")
+    # Identifiers are synthetic placeholders of the same *length* as the real ones — the
+    # length is the whole point of this fixture, and rule 4 keeps case numbers out of git.
+    inner_stem = ("Re__ACCOUNTNOREDACT_KYC_PERMANENT_ADDRESS_PROOF_and_TERMS_CONDITION_"
+                  "FORM_and_PANCARD_FORM_60_61_49A_regarding_CCPS_FIR_0065_2024_reply")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as inner:
+        inner.writestr("ACCOUNTNOREDACT KYC/E_SIGNATURE.csv", "Amount,Date\n10,01-08-2024\n")
+
+    outer = tmp_path / f"{outer_stem}.zip"
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr(f"{inner_stem}.zip", buf.getvalue())
+
+    # Extract under a real mkdtemp root, exactly as service._walk does. pytest's own
+    # tmp_path is ~90 characters, which would spend the budget on the harness rather
+    # than on the geometry under test.
+    scratch = Path(tempfile.mkdtemp(prefix="erakshak-archives-"))
+    try:
+        dest = scratch / archive.scratch_dirname(outer.stem, str(outer))
+        extracted = archive.extract_archive(str(outer), dest, max_total_bytes=1 << 20)
+
+        assert any(f.name == "E_SIGNATURE.csv" for f in extracted), (
+            "nested member was lost; before the fix this raised WinError 206")
+
+        # The limit Windows actually enforces, on the absolute path.
+        for f in extracted:
+            assert len(str(f)) < 260, f"path too long ({len(str(f))} chars): {f}"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_member_names_windows_cannot_represent_are_still_recovered(tmp_path):
+    """A member named with a colon must not be lost on Windows.
+
+    ZIPs written on Linux/macOS carry characters Windows refuses. Real evidence does: a
+    Bandhan reply in `FIR 65-2024` ships members under
+    `summary_BNB-REFNUM_FIR 0065:2024_17_06_2025`, and every one failed with
+    `[WinError 267] The directory name is invalid` — logged as "member unreadable", which
+    reads like a corrupt exhibit rather than a limit of our own filesystem.
+    """
+    from backend.app.ingestion.parsers import archive
+
+    _zip_with(tmp_path, "reply.zip", {
+        "summary_BNB-REFNUM_FIR 0065:2024_17_06_2025/report.csv": "Amount,Date\n10,01-08-2024\n",
+    })
+    extracted = archive.extract_archive(str(tmp_path / "reply.zip"), tmp_path / "o",
+                                        max_total_bytes=1 << 20)
+
+    assert [f.name for f in extracted] == ["report.csv"]
+    assert extracted[0].read_text(encoding="utf-8").startswith("Amount,Date")
+
+
+def test_sanitising_member_names_does_not_weaken_the_traversal_guard():
+    """`..` must survive sanitisation, or the path-escape check stops seeing an escape."""
+    from backend.app.ingestion.parsers import archive
+
+    assert archive._sanitise_for_windows("../escaped.csv") == "../escaped.csv"
+    assert archive._sanitise_for_windows("a/../../b.csv") == "a/../../b.csv"
+    assert archive._sanitise_for_windows("FIR 0065:2024/x.csv") == "FIR 0065_2024/x.csv"
+
+
 def test_encrypted_archive_does_not_abort_the_batch(tmp_path):
     """Operators send password-protected archives; zipfile raises a bare RuntimeError.
 

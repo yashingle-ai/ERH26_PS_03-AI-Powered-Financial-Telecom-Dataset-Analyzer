@@ -698,7 +698,9 @@ def _walk(root: Path, out: list[ParsedFile], pdf_cap: float, include_pdf: bool,
     total = max(len(paths), 1)
     for i, p in enumerate(paths):
         if p.suffix.lower() == ".zip":
-            dest = scratch / f"{p.stem}-{abs(hash(str(p))) & 0xFFFFFF:06x}"
+            # Bounded (see archive.scratch_dirname): an unbounded stem here is half of
+            # what pushed nested members past the Windows 260-character path limit.
+            dest = scratch / archive.scratch_dirname(p.stem, str(p))
             for member in archive.extract_archive(
                 str(p), dest,
                 max_total_bytes=archive_budget,
