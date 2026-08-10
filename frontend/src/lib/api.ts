@@ -25,6 +25,8 @@ type RequestOptions = {
    * expected duration of a slow call so the token cannot expire mid-flight.
    */
   minTokenSeconds?: number;
+  /** Abort a hung fetch (progress polls must not wait forever on a GIL-blocked API). */
+  signal?: AbortSignal;
 };
 
 /**
@@ -85,6 +87,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     method: opts.method || "GET",
     headers,
     body: opts.body ?? null,
+    signal: opts.signal,
   });
 
   if (res.status === 401 && auth) {
@@ -263,6 +266,11 @@ export type AnalyzeProgress = {
   error?: string | null;
   from_cache?: boolean;
   stages?: AnalyzeStage[];
+  /**
+   * Client-only: seconds since the last successful progress poll. Large values
+   * mean the API is busy (GIL) and stage/percent may be stale — elapsed still ticks.
+   */
+  stale_seconds?: number | null;
 };
 
 export type AnalyzeResponse = {
@@ -540,10 +548,11 @@ export const api = {
    * minimum would trigger a token refresh on every poll. The analyze call it
    * accompanies already holds a token good for 20 minutes.
    */
-  analyzeProgress(dataset: string, window = 10) {
+  analyzeProgress(dataset: string, window = 10, opts: { signal?: AbortSignal } = {}) {
     const q = new URLSearchParams({ window: String(window) });
     return request<AnalyzeProgress>(
       `/v1/analyze/progress/${encodeURIComponent(dataset)}?${q}`,
+      { signal: opts.signal },
     );
   },
 

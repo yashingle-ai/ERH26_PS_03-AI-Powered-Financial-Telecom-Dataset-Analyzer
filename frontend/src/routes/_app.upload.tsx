@@ -2,47 +2,22 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/case-topbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import {
   UploadCloud, FileSpreadsheet, PhoneCall, Globe, CheckCircle2,
-  AlertTriangle, Loader2, X, FileWarning, RotateCw, Database,
+  AlertTriangle, Loader2, X, FileWarning, RotateCw,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useInvestigation } from "@/lib/investigation-context";
-import { api, type AnalyzeStage, type UploadFileResult, type UploadKind } from "@/lib/api";
-import { useAnalyzeProgress, formatDuration } from "@/hooks/use-analyze-progress";
+import { api, type UploadFileResult, type UploadKind } from "@/lib/api";
+import { useAnalyzeProgress } from "@/hooks/use-analyze-progress";
+import { AnalyzeProgressPanel } from "@/components/analyze-progress-panel";
 import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_app/upload")({
   head: () => ({ meta: [{ title: "Upload & ingest — ERakshak" }] }),
   component: UploadPage,
 });
-
-/**
- * Shown only until the first progress poll returns; after that the server's own
- * stage list is authoritative (`analyze_progress.STAGES`).
- *
- * These are deliberately the *server's* nine stages, not the nine this page used
- * to invent. The old list ("Ingest", "Money-flow", "Report") described a pipeline
- * that does not exist in that order, and nothing tied the two lists together.
- */
-const FALLBACK_STAGES: AnalyzeStage[] = [
-  { id: "parse", label: "Parsing evidence files", weight: 55 },
-  { id: "normalize", label: "Normalising fields & timestamps", weight: 8 },
-  { id: "resolve", label: "Resolving entities", weight: 7 },
-  { id: "documents", label: "Indexing narrative documents", weight: 5 },
-  { id: "timeline", label: "Building timeline & transfers", weight: 5 },
-  { id: "correlate", label: "Correlating call / IP / transfers", weight: 8 },
-  { id: "detect", label: "Scoring risk & typologies", weight: 7 },
-  { id: "graph", label: "Building investigation graph", weight: 4 },
-  { id: "persist", label: "Saving durable snapshot", weight: 1 },
-];
-
-/** Two or three words for the stepper chip; the full label goes in `title`. */
-function shortLabel(label: string): string {
-  return label.split(/\s+/).slice(0, 2).join(" ");
-}
 
 /** Mirrors UPLOAD_EXTENSIONS on the API. Kept in step so the picker does not
  *  offer a type the server will reject. */
@@ -202,15 +177,6 @@ function UploadPage() {
   // Poll only while a run is in flight. Nothing is requested when idle.
   const progress = useAnalyzeProgress(runningDs, windowMinutes, running);
 
-  const stageList = progress?.stages?.length ? progress.stages : FALLBACK_STAGES;
-  const stageIndex = progress?.stage_index ?? -1;
-  // Before the first poll lands there is no server percent yet; showing 0 while
-  // "Running…" is honest, and beats inventing motion.
-  const percent = finished ? 100 : (progress?.percent ?? 0);
-  const eta = formatDuration(progress?.eta_seconds);
-  const elapsed = formatDuration(progress?.elapsed_seconds);
-  const fromCache = progress?.from_cache === true;
-
   const isFixtureTarget = FIXTURE_DATASETS.has(target.trim().toLowerCase());
   const queuedBytes = queued.reduce((a, f) => a + f.size, 0);
   const stored = results?.filter((r) => r.status === "stored").length ?? 0;
@@ -365,93 +331,13 @@ function UploadPage() {
         </div>
       )}
 
-      <div className="mb-6 rounded-lg border border-border bg-surface/60 p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-            Pipeline
-          </div>
-          <div className="text-mono flex items-center gap-3 text-[11px] text-muted-foreground">
-            {running && stageIndex >= 0 && (
-              <span>Stage {stageIndex + 1}/{stageList.length}</span>
-            )}
-            {running && <span className="text-foreground">{percent.toFixed(1)}%</span>}
-            {elapsed && <span title="Elapsed">{elapsed} elapsed</span>}
-            {/* An ETA is only shown while running: after completion it is 0 and
-                reads as though something is still pending. */}
-            {running && eta && <span title="Estimated time remaining">~{eta} left</span>}
-            {!running && !finished && "Idle"}
-            {!running && finished && (
-              servedFromCache
-                ? (
-                  <span title="Served from a saved analysis — no files were re-parsed"
-                        className="flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-primary">
-                    <Database className="h-3 w-3" /> From saved analysis
-                  </span>
-                )
-                : (
-                  <span title="A full pipeline run — every file was parsed"
-                        className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-widest">
-                    Freshly parsed
-                  </span>
-                )
-            )}
-          </div>
-        </div>
-
-        <Progress value={percent} className="mb-2 h-1.5"
-                  aria-label="Pipeline progress" />
-
-        {/* The server's own message — "Parsing evidence files 812/986" — is the
-            only thing that distinguishes a working long run from a hung one.
-            aria-live="polite" so a screen-reader user is told which stage is
-            running without having to poll the region manually; a run can last
-            49 minutes and silence is indistinguishable from a hang. */}
-        <div className="text-mono mb-4 flex min-h-[16px] items-center gap-2 text-[11px]"
-             role="status" aria-live="polite">
-          {running && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[color:var(--risk-med)]" />}
-          <span className="truncate text-muted-foreground">
-            {progress?.message || (running ? "Starting pipeline…" : "")}
-          </span>
-          {progress?.total ? (
-            <span className="shrink-0 text-muted-foreground/70">
-              {progress.done ?? 0}/{progress.total}
-            </span>
-          ) : null}
-          {fromCache && (
-            <span className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase tracking-widest text-primary">
-              cached
-            </span>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 md:grid-cols-9">
-          {stageList.map((s, i) => {
-            const done = finished || (stageIndex >= 0 && i < stageIndex);
-            const active = running && i === stageIndex;
-            return (
-              <div
-                key={s.id}
-                title={s.label}
-                className={`rounded border px-2 py-2 text-center ${
-                  done ? "border-primary/40 bg-primary/10 text-primary" :
-                  active ? "border-[color:var(--risk-med)]/40 bg-[color:var(--risk-med)]/10 text-[color:var(--risk-med)]" :
-                  "border-border text-muted-foreground"
-                }`}
-              >
-                <div className="mx-auto mb-1 flex h-5 w-5 items-center justify-center">
-                  {done ? <CheckCircle2 className="h-3.5 w-3.5" /> :
-                   active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> :
-                   <AlertTriangle className="h-3.5 w-3.5 opacity-30" />}
-                </div>
-                <div className="text-mono text-[9px] uppercase tracking-widest">
-                  {shortLabel(s.label)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {summary && <div className="text-mono mt-4 text-[11px] text-primary">{summary}</div>}
-      </div>
+      <AnalyzeProgressPanel
+        running={running}
+        finished={finished}
+        progress={progress}
+        servedFromCache={servedFromCache}
+        summary={summary}
+      />
 
       <div className="rounded-lg border border-border bg-surface/40 p-5">
         <h3 className="mb-4 text-sm font-semibold text-foreground">Data formatting & folder layout</h3>

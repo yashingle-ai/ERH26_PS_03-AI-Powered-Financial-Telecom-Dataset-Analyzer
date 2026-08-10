@@ -5,14 +5,14 @@ import { RiskBadge } from "@/components/risk-badge";
 import {
   Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart, CartesianGrid, Legend,
 } from "recharts";
-import { ArrowUpRight, Clock, Share2, FileText, TrendingUp, PhoneCall, Globe, ArrowRightLeft } from "lucide-react";
-import { LoadingState } from "@/components/shared/loading-state";
+import { ArrowUpRight, Clock, Share2, FileText, TrendingUp, PhoneCall, Globe, ArrowRightLeft, Loader2 } from "lucide-react";
 import { ErrorState } from "@/components/shared/error-state";
-import { OverviewSkeleton } from "@/components/shared/skeletons";
+import { AnalyzeProgressPanel } from "@/components/analyze-progress-panel";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useAnalyze } from "@/hooks/use-investigation-data";
+import { useAnalyzeProgress } from "@/hooks/use-analyze-progress";
 import { useInvestigation } from "@/lib/investigation-context";
 import { mapCaseFromAnalyze, mapEntity, mapHit, riskDistributionFrom } from "@/lib/mappers";
 
@@ -35,9 +35,33 @@ function KPI({ label, value, sub, tone = "default" }: { label: string; value: st
 function OverviewPage() {
   const { dataset, windowMinutes } = useInvestigation();
   const { data, isLoading, error } = useAnalyze();
+  // Overview's useAnalyze() holds POST /v1/analyze open for the whole run
+  // (11–49 min on a real FIR). Poll progress while that request is in flight
+  // and we have nothing to render yet — same bar/ETA as Upload.
+  const analyzing = isLoading;
+  const progress = useAnalyzeProgress(dataset, windowMinutes, analyzing);
 
-  if (isLoading) {
-    return <OverviewSkeleton />;
+  if (analyzing) {
+    return (
+      <div className="mx-auto max-w-7xl">
+        <PageHeader
+          eyebrow={`${(dataset || "—").toUpperCase()} · Analyzing`}
+          title="Case overview"
+          description={`Running the full pipeline for window W=${windowMinutes}m. Progress below is live from the server.`}
+          actions={
+            <span className="text-mono inline-flex items-center gap-2 text-[11px] uppercase tracking-widest text-[color:var(--risk-med)]">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Analyzing…
+            </span>
+          }
+        />
+        <AnalyzeProgressPanel
+          running
+          progress={progress}
+          title="Analyzing dataset"
+        />
+      </div>
+    );
   }
 
   if (error || !data) {
