@@ -21,8 +21,12 @@ export const Route = createFileRoute("/_app/ask")({
   component: AskPage,
 });
 
+// Every example must use an identifier from `datasets/raw/demo` — a synthetic
+// fixture. The first of these was a real MSISDN from FIR 65-2024: it shipped as
+// both the chip and the placeholder, so it rendered on screen for any analyst
+// who opened this page, and in any screen recording of it. Rule 4.
 const EXAMPLES = [
-  "who did 9702000558 call most often?",
+  "who did 9394731217 call most often?",
   "transfers over 100000",
   "high risk entities",
   "calls between 2am and 5am",
@@ -80,7 +84,7 @@ function AskPage() {
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="e.g. who did 9702000558 call most often?"
+            placeholder="e.g. who did 9394731217 call most often?"
             className="h-11 border-border bg-surface pl-10 text-[14px]"
             disabled={!dataset || busy}
           />
