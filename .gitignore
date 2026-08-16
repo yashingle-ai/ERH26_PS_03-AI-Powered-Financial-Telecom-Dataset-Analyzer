@@ -82,3 +82,4 @@ artifacts/
 # Before committing anything in it, sweep for identifiers:
 #   grep -nE "(^|[^0-9])([6-9][0-9]{9}|[0-9]{15,16})([^0-9]|$)" "docs/handbook/"*.md
 docs/gaps_in_current_system.MD
+demo_video
